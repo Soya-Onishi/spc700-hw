@@ -1,7 +1,7 @@
 package spc700.core
 
 import chisel3._
-import chisel3.util.{switch, is}
+import chisel3.util.{switch, is, SwitchContext}
 import chisel3.util.Cat
 
 class ALU extends Module {

@@ -2,7 +2,7 @@ package spc700.core
 
 import chisel3._
 import chisel3.experimental.ChiselEnum
-import chisel3.util.{Cat, Enum, is, switch}
+import chisel3.util.{Cat, Enum, is, switch, SwitchContext}
 
 class Core extends Module {
   override val io = IO(new Bundle{
@@ -222,7 +222,7 @@ class Core extends Module {
 
     op0 := regs.a
     op1 := DontCare
-    switch {
+    switch(op0Reg) {
       is(RegType.X) { op0 := regs.x }
       is(RegType.Y) { op0 := regs.y }
     }
@@ -242,7 +242,7 @@ class Core extends Module {
         op1 := io.ramReadData
 
         when(isStore) {
-          stored := runByteALU(this.inst.ops, op1, op0)
+          stored := op0
           absArithState := writeRam
         } .otherwise {
           val out = runByteALU(this.inst.ops, op0, op1)
@@ -268,9 +268,112 @@ class Core extends Module {
   }
 
   private def runAbsCall(): Unit = {
+    val readNewPCH :: none0 :: pushPCH :: pushPCL :: none1 :: renewPC :: Nil = Enum(6)
     val newPCL = readData0
     val newPCH = Reg(UInt(8.W))
+    val absCallState = RegInit(readNewPCH)
 
+    switch(absCallState) {
+      is(readNewPCH) {
+        io.ramReadAddr := regs.pc
+
+        regs.pc := regs.pc + 1.U
+        newPCH := io.ramReadData
+        absCallState := none0
+      }
+      is(none0) {
+        absCallState := pushPCH
+      }
+      is(pushPCH) {
+        val pcUpper = regs.pc(15, 8)
+        pushStack(pcUpper)
+        absCallState := pushPCL
+      }
+      is(pushPCL) {
+        val pcLower = regs.pc(7, 0)
+        pushStack(pcLower)
+        absCallState := none1
+      }
+      is(none1) {
+        absCallState := renewPC
+      }
+      is(renewPC) {
+        regs.pc := Cat(newPCH, newPCL)
+
+        absCallState := readNewPCH
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runAbsJmp(): Unit = {
+    io.ramReadAddr := regs.pc
+    val newPCL = readData0
+    val newPCH = io.ramReadData
+
+    regs.pc := Cat(newPCH, newPCL)
+    globalState := fetch
+  }
+
+  private def runAbsRMW(): Unit = {
+    val fetchAddrH :: fetchData :: storeResult ::Nil = Enum(3)
+    val addrL = readData0
+    val addrH = Reg(UInt(8.W))
+    val result = Reg(UInt(8.W))
+    val absRMWState = RegInit(fetchAddrH)
+
+    switch(absRMWState) {
+      is(fetchAddrH) {
+        addrH := readAbs(regs.pc)
+        regs.pc := regs.pc + 1.U
+        absRMWState := fetchData
+      }
+      is(fetchData) {
+        val readData = readAbs(Cat(addrH, addrL))
+
+        result := runByteALU(this.inst.ops, readData, readData)
+        absRMWState := storeResult
+      }
+      is(storeResult) {
+        writeAbs(Cat(addrH, addrL), result)
+
+        absRMWState := fetchAddrH
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runAbsRMWBit(): Unit = {
+    val fetchAddrH :: addX :: fetchPCL :: fetchPCH :: Nil = Enum(4)
+    val addrL = readData0
+    val addrH = Reg(UInt(8.W))
+    val newPCL = Reg(UInt(8.W))
+    val fetchAddr = Reg(UInt(16.W))
+    val absRMWBitState = RegInit(fetchAddrH)
+
+    switch(absRMWBitState) {
+      is(fetchAddrH) {
+        addrH := readAbs(regs.pc)
+        regs.pc := regs.pc + 1.U
+        absRMWBitState := addX
+      }
+      is(addX) {
+        fetchAddr := Cat(addrH, addrL) + regs.x
+        absRMWBitState := fetchPCL
+      }
+      is(fetchPCL) {
+        newPCL := readAbs(fetchAddr)
+        fetchAddr := fetchAddr + 1.U
+        absRMWBitState := fetchPCH
+      }
+      is(fetchPCH) {
+        val newPCH = readAbs(fetchAddr)
+        regs.pc := Cat(newPCH, newPCL)
+
+        absRMWBitState := fetchAddrH
+        globalState := fetch
+      }
+    }
   }
 
   private def jumpState(): Unit = {
@@ -299,6 +402,18 @@ class Core extends Module {
     regs.psw.sign := byteALU.io.out.head(1).toBool()
 
     byteALU.io.out
+  }
+
+  private def readAbs(abs: UInt): UInt = {
+    io.ramReadAddr := abs
+
+    io.ramReadData
+  }
+
+  private def writeAbs(abs: UInt, data: UInt): Unit = {
+    io.ramWriteEn   := true.B
+    io.ramWriteAddr := abs
+    io.ramWriteData := data
   }
 
   private def readDp(dpAddr: UInt): UInt = {

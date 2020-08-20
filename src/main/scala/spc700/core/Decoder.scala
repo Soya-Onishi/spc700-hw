@@ -60,7 +60,6 @@ object Decoder {
           case 0xA | 0xB => Ops.SUB
           case 0xC if lower ==  0x8 => Ops.CMP
           case _         => Ops.MOV
-          case _ => throw new MatchError(s"upper must be between 0x0 to 0xF, actual: $upper")
         }
       case (upper,   0xA) =>
         upper match {
