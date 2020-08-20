@@ -5,7 +5,7 @@ import chisel3._
 class Decoder extends Module {
   override val io = IO(new Bundle{
     val opcode = Input(UInt(8.W))
-    val inst = Output(Operation())
+    val inst = Output(Instruction())
   })
 
   io.inst.opcode := io.opcode
@@ -182,7 +182,7 @@ object Decoder {
           case 0x1 | 0x3                         => Addressing.Acc
           case 0x5 | 0x7 | 0x9 | 0xB | 0xD | 0xF => Addressing.Acc
           case 0x8 | 0xA | 0xC                   => Addressing.Imm
-          case 0xE                               => Addressing.Special
+          case 0xE                               => Addressing.PSWMan
         }
       case (upper, 0xE) =>
         upper match {

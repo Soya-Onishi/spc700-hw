@@ -44,7 +44,7 @@ package object core {
     val    AbsX,     AbsY,     Acc,  DpCalc,     DpRMW,    DpCMPW = Value
     val  DpWord,    DpINC,    DpDp,   DpImm,    DpIndX,    DpIndY = Value
     val   DpRel,      DpX,  DpXRMW,  DpXRel,       DpY,      IndX = Value
-    val IndXInc, IndXIndY,     Imm, BitMan,     Branch            = Value
+    val IndXInc, IndXIndY,     Imm, BitMan,     Branch,    PSWMan = Value
     val RelDBNZ,  Special                                         = Value
   }
 
@@ -62,10 +62,10 @@ package object core {
     val  NOP,SLEEP, STOP                                         = Value
   }
 
-  object Operation {
-    def apply(): Operation = new Operation
+  object Instruction {
+    def apply(): Instruction = new Instruction
   }
-  class Operation extends Bundle {
+  class Instruction extends Bundle {
     val opcode = UInt(8.W)
     val ops = Ops()
     val addressing = Addressing()

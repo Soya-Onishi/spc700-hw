@@ -41,6 +41,8 @@ class ALU extends Module {
     is(Ops.ROL) { rol() }
     is(Ops.LSR) { lsr() }
     is(Ops.ROR) { ror() }
+    is(Ops.INC) { inc() }
+    is(Ops.DEC) { dec() }
   }
 
   private def adc(): Unit = {
@@ -100,7 +102,7 @@ class ALU extends Module {
     val res = io.op0 - io.op1
 
     setCarry(res.head(1).toBool())
-    io.out := res.tail(1)
+    io.out := io.op0
   }
 
   private def or(): Unit = {
@@ -137,6 +139,14 @@ class ALU extends Module {
   private def ror(): Unit = {
     setCarry(io.op0.head(1).toBool())
     io.out := Cat(io.carryIn.asUInt(), io.op0(7, 1))
+  }
+
+  private def inc(): Unit = {
+    io.out := io.op0 + 1.U
+  }
+
+  private def dec(): Unit = {
+    io.out := io.op0 - 1.U
   }
 
   private def setCarry(c: Bool): Unit = {
