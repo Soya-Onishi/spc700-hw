@@ -267,6 +267,12 @@ class Core extends Module {
     }
   }
 
+  private def runAbsCall(): Unit = {
+    val newPCL = readData0
+    val newPCH = Reg(UInt(8.W))
+
+  }
+
   private def jumpState(): Unit = {
     val jump0 :: jump1 :: Nil = Enum(2)
     val jmpState = RegInit(jump0)
@@ -293,6 +299,33 @@ class Core extends Module {
     regs.psw.sign := byteALU.io.out.head(1).toBool()
 
     byteALU.io.out
+  }
+
+  private def readDp(dpAddr: UInt): UInt = {
+    io.ramReadAddr := Cat(regs.psw.page, dpAddr)
+
+    io.ramReadData
+  }
+
+  private def writeDp(dpAddr: UInt, data: UInt): Unit = {
+    io.ramWriteEn := true.B
+    io.ramWriteAddr := Cat(regs.psw.page, dpAddr)
+    io.ramWriteData := data
+  }
+
+  private def pushStack(data: UInt): Unit = {
+    io.ramWriteEn := true.B
+    io.ramWriteAddr := Cat(1.U, regs.sp)
+    io.ramWriteData := data
+
+    regs.sp := regs.sp - 1.U
+  }
+
+  private def popStack(): UInt = {
+    regs.sp := regs.sp + 1.U
+    io.ramReadAddr := Cat(1.U, regs.sp + 1.U)
+
+    io.ramReadData
   }
 }
 
