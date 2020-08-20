@@ -376,6 +376,255 @@ class Core extends Module {
     }
   }
 
+  // run Absolute + Index addressing mode
+  // Abs+X or Abs+Y
+  // idx is regs.x or regs.y
+  private def runAbsIndex(idx: UInt): Unit = {
+    val fetchAbsH :: addIndex :: fetchData :: storeResult :: Nil = Enum(4)
+    val absL = readData0
+    val absH = Reg(UInt(8.W))
+    val addr = Reg(UInt(16.W))
+    val absXState = RegInit(fetchAbsH)
+    val isStore = inst.opcode === 0xD5.U | inst.opcode === 0xD6.U
+
+    switch(absXState) {
+      is(fetchAbsH) {
+        absH := readAbs(regs.pc)
+        regs.pc := regs.pc + 1.U
+        absXState := addIndex
+      }
+      is(addIndex) {
+        addr := Cat(absH, absL) + idx
+        absXState := fetchData
+      }
+      is(fetchData) {
+        val op1 = readAbs(addr)
+        when(isStore) {
+          absXState := storeResult
+        }.otherwise {
+          val out = runByteALU(inst.ops, regs.a, op1)
+          regs.a := out
+
+          absXState := fetchAbsH
+          globalState := fetch
+        }
+      }
+      is(storeResult) {
+        writeAbs(addr, regs.a)
+
+        absXState := fetchAbsH
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runDpArith(): Unit = {
+    val fetchData :: storeResult :: Nil = Enum(2)
+    val regType = RegType()
+    val dpArithState = RegInit(fetchData)
+    val isStore = inst.opcode === 0xC4.U | inst.opcode === 0xD8.U | inst.opcode === 0xCB.U
+
+    regType := RegType.A
+    switch(inst.opcode) {
+      is(0xF8.U) { regType := RegType.X }
+      is(0xEB.U) { regType := RegType.Y }
+      is(0xD8.U) { regType := RegType.X }
+      is(0xCB.U) { regType := RegType.Y }
+      is(0x3E.U) { regType := RegType.X }
+      is(0x7E.U) { regType := RegType.Y }
+    }
+
+    val op0 = UInt(8.W)
+    op0 := regs.a
+    switch(regType) {
+      is(RegType.X) { op0 := regs.x }
+      is(RegType.Y) { op0 := regs.y }
+    }
+
+    switch(dpArithState) {
+      is(fetchData) {
+        val op1 = readDp(readData0)
+        when(isStore) {
+          dpArithState := storeResult
+        } .otherwise {
+          val out = runByteALU(inst.ops, op0, op1)
+          switch(regType) {
+            is(RegType.A) { regs.a := out }
+            is(RegType.X) { regs.x := out }
+            is(RegType.Y) { regs.y := out }
+          }
+
+          globalState := fetch
+        }
+      }
+      is(storeResult) {
+        writeDp(readData0, op0)
+
+        dpArithState := fetchData
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runDpRMW(): Unit = {
+    val fetchData :: storeResult :: Nil = Enum(2)
+    val dpRMWState = RegInit(fetchData)
+    val fetchedData = Reg(UInt(8.W))
+    val isBitMan = inst.ops === Ops.CLR | inst.ops === Ops.SET
+    val bitmanIdx = inst.opcode(7, 5)
+    val dpAddr = readData0
+
+    switch(dpRMWState) {
+      is(fetchData) {
+        fetchedData := readDp(dpAddr)
+        dpRMWState := storeResult
+      }
+      is(storeResult) {
+        val out = UInt(8.W)
+        out := DontCare
+        when(isBitMan) {
+          switch(inst.ops) {
+            is(Ops.CLR) { out := bitManipulation(fetchedData, false.B, bitmanIdx) }
+            is(Ops.SET) { out := bitManipulation(fetchedData,  true.B, bitmanIdx) }
+          }
+        }.otherwise {
+          out := runByteALU(inst.ops, fetchedData, fetchedData)
+        }
+
+        writeDp(dpAddr, out)
+
+        dpRMWState := fetchData
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runDpCMPW(): Unit = {
+    val fetchL :: fetchH :: Nil = Enum(2)
+    val dataL = Reg(UInt(8.W))
+    val dpCMPWState = RegInit(fetchL)
+    val addrH = Reg(UInt(8.W))
+    val dpAddr = readData0
+
+    switch(dpCMPWState) {
+      is(fetchL) {
+        dataL := readDp(dpAddr)
+        addrH := dpAddr + 1.U
+        dpCMPWState := fetchH
+      }
+      is(fetchH) {
+        val dataH = readDp(addrH)
+        val word = Cat(dataH, dataL)
+        val ya = Cat(regs.y, regs.a)
+        val ret = ya - word
+
+        regs.psw.sign  := ret(15).toBool()
+        regs.psw.zero  := ret === 0.U
+        regs.psw.carry := ret.head(1).toBool()
+      }
+    }
+  }
+
+  // execute ADDW, MOVW or SUBW
+  private def runDpWord(): Unit = {
+    val fetchL :: calc :: fetchH :: Nil = Enum(3)
+    val dpWordState = RegInit(fetchL)
+    val dataL = Reg(UInt(8.W))
+    val dpAddrH = Reg(UInt(8.W))
+    val dpAddrL = readData0
+    val isStore = inst.opcode === 0xDA.U
+
+    switch(dpWordState) {
+      is(fetchL) {
+        dataL := readDp(dpAddrL)
+        dpAddrH := dpAddrL + 1.U
+
+        dpWordState := calc
+      }
+      is(calc) {
+        when(isStore) {
+          writeDp(dpAddrL, regs.a)
+        } .otherwise {
+          switch(inst.ops) {
+            is(Ops.ADD) { dataL := runByteALU(inst.ops, regs.a, dataL, false.B) }
+            is(Ops.SUB) { dataL := runByteALU(inst.ops, regs.a, dataL,  true.B) }
+            is(Ops.MOV) { dataL := runByteALU(inst.ops, regs.a, dataL) }
+          }
+        }
+
+        dpWordState := fetchH
+      }
+      is(fetchH) {
+        when(isStore) {
+          writeDp(dpAddrH, regs.y)
+        } .otherwise {
+          val dataH = readDp(dpAddrH)
+          val res   = UInt(8.W)
+          res := DontCare
+          switch(inst.ops) {
+            is(Ops.ADD) { res := runByteALU(inst.ops, regs.y, dataH) }
+            is(Ops.SUB) { res := runByteALU(inst.ops, regs.y, dataH) }
+            is(Ops.MOV) { res := runByteALU(inst.ops, regs.y, dataH) }
+          }
+
+          regs.a := dataL
+          regs.y := res
+
+          dpWordState := fetchL
+          globalState := fetch
+        }
+      }
+    }
+  }
+
+  private def runDpINCW(): Unit = {
+    val fetchL :: storeL :: fetchH :: storeH :: Nil = Enum(4)
+    val dpINCWState = RegInit(fetchL)
+
+    val dataL = Reg(UInt(8.W))
+    val dataH = Reg(UInt(8.W))
+    val outL = Reg(UInt(8.W))
+    val dpAddrL = readData0
+    val dpAddrH = Reg(UInt(8.W))
+    val carry = Reg(Bool())
+    val isINC = inst.ops === Ops.INC
+
+    switch(dpINCWState) {
+      is(fetchL) {
+        dataL := readDp(dpAddrL)
+        dpAddrH := dpAddrL + 1.U
+
+        dpINCWState := storeL
+      }
+      is(storeL) {
+        val out = Mux(isINC, dataL + 1.U, dataL - 1.U)
+        outL := out
+        carry := out.head(1)
+        writeDp(dpAddrL, out.tail(1))
+
+        dpINCWState := fetchH
+      }
+      is(fetchH) {
+        dataH := readDp(dpAddrH)
+
+        dpINCWState := storeH
+      }
+      is(storeH) {
+        val out = Mux(isINC, dataH + carry.asUInt(), dataH - !carry.asUInt())
+        val outH = out.tail(1)
+        val result = Cat(outH, outL)
+
+        writeDp(dpAddrH, outH)
+
+        regs.psw.sign := result.head(1).toBool()
+        regs.psw.zero := result === 0.U
+        dpINCWState := fetchL
+        globalState := fetch
+      }
+    }
+
+  }
+
   private def jumpState(): Unit = {
     val jump0 :: jump1 :: Nil = Enum(2)
     val jmpState = RegInit(jump0)
@@ -390,10 +639,11 @@ class Core extends Module {
     }
   }
 
-  private def runByteALU(op: Ops.Type, op0: UInt, op1: UInt): UInt = {
+  private def runByteALU(op: Ops.Type, op0: UInt, op1: UInt, carryIn: Bool = regs.psw.carry): UInt = {
     byteALU.io.ops := op
     byteALU.io.op0 := op0
     byteALU.io.op1 := op1
+    byteALU.io.carryIn := carryIn
 
     when(byteALU.io.carryEn)    { regs.psw.carry := byteALU.io.carryOut }
     when(byteALU.io.halfEn)     { regs.psw.half  := byteALU.io.halfOut  }
@@ -441,6 +691,25 @@ class Core extends Module {
     io.ramReadAddr := Cat(1.U, regs.sp + 1.U)
 
     io.ramReadData
+  }
+
+  private def bitManipulation(src: UInt, bit: Bool, idx: UInt): UInt = {
+    val srcBits = VecInit(src.toBools())
+    val ret = UInt(8.W)
+
+    switch(idx) {
+      is(0.U) { srcBits(0) := bit }
+      is(1.U) { srcBits(1) := bit }
+      is(2.U) { srcBits(2) := bit }
+      is(3.U) { srcBits(3) := bit }
+      is(4.U) { srcBits(4) := bit }
+      is(5.U) { srcBits(5) := bit }
+      is(6.U) { srcBits(6) := bit }
+      is(7.U) { srcBits(7) := bit }
+    }
+
+    ret := srcBits.asUInt()
+    ret
   }
 }
 

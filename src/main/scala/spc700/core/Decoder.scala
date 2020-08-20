@@ -162,7 +162,12 @@ object Decoder {
       case (    _, 0x9) => Addressing.DpY
       case (upper, 0xA) if upper % 2 == 0 => Addressing.BitMan
       case (  0xF, 0xA) => Addressing.DpDp
-      case (    _, 0xA) => Addressing.DpWord
+      case (upper, 0xA) =>
+        upper match {
+          case 0x1 | 0x3             => Addressing.DpINCW
+          case 0x5                   => Addressing.DpCMPW
+          case 0x7 | 0x9 | 0xB | 0xD => Addressing.DpWord
+        }
       case (upper, 0xB) if upper % 2 == 0 && upper <= 0xB => Addressing.DpRMW
       case (upper, 0xB) if upper <= 0xB => Addressing.DpXRMW
       case (  0xC, 0xB) => Addressing.DpCalc

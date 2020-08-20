@@ -42,7 +42,7 @@ package object core {
   object Addressing extends ChiselEnum {
     val AbsCalc,  AbsCall,  AbsJmp,  AbsRMW, AbsRMWBit, AbsIdxInd = Value
     val    AbsX,     AbsY,     Acc,  DpCalc,     DpRMW,    DpCMPW = Value
-    val  DpWord,    DpINC,    DpDp,   DpImm,    DpIndX,    DpIndY = Value
+    val  DpWord,   DpINCW,    DpINC,   DpDp,     DpImm,    DpIndX,  DpIndY = Value
     val   DpRel,      DpX,  DpXRMW,  DpXRel,       DpY,      IndX = Value
     val IndXInc, IndXIndY,     Imm, BitMan,     Branch,    PSWMan = Value
     val RelDBNZ,  Special                                         = Value
