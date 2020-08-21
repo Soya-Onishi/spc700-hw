@@ -25,6 +25,9 @@ class MemController extends Module {
 
     val readTimer = Output(Vec(3, Bool()))
     val timerOut = Input(Vec(3, UInt(8.W)))
+
+    val addrFromDSP = Input(Vec(2, UInt(16.W)))
+    val dataToDSP = Output(Vec(2, UInt(8.W)))
   })
 
   val mem = Mem(64 * 1024, UInt(8.W))
@@ -43,6 +46,9 @@ class MemController extends Module {
   io.setDSPRegister := false.B
   io.dspAddr := dspAddr
   io.wDspData := DontCare
+
+  io.dataToDSP(0) := mem.read(io.addrFromDSP(0))
+  io.dataToDSP(1) := mem.read(io.addrFromDSP(1))
 
   when(io.readEn) {
     val readIO = io.addr >= 0x00F1.U & io.addr <= 0x00FF.U
