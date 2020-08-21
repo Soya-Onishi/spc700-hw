@@ -175,6 +175,8 @@ class Core extends Module {
   }
 
   private def manPSWDecode(ops: Ops.Type): Unit = {
+    regs.pc := regs.pc + 1.U
+
     switch(ops) {
       is(Ops.CLRP) { regs.psw.page  := false.B }
       is(Ops.SETP) { regs.psw.page  := true.B  }
@@ -194,7 +196,6 @@ class Core extends Module {
   }
 
   private def manPSWExec(): Unit = {
-    regs.pc := regs.pc + 1.U
     globalState := fetch
   }
 
@@ -484,8 +485,8 @@ class Core extends Module {
         out := DontCare
         when(isBitMan) {
           switch(inst.ops) {
-            is(Ops.CLR) { out := bitManipulation(fetchedData, false.B, bitmanIdx) }
-            is(Ops.SET) { out := bitManipulation(fetchedData,  true.B, bitmanIdx) }
+            is(Ops.CLR) { out := setBit(fetchedData, false.B, bitmanIdx) }
+            is(Ops.SET) { out := setBit(fetchedData,  true.B, bitmanIdx) }
           }
         }.otherwise {
           out := runByteALU(inst.ops, fetchedData, fetchedData)
@@ -700,7 +701,9 @@ class Core extends Module {
     }
   }
 
-  def runDpIdx(idx: UInt): Unit = {
+
+  // For [[dp+X]]
+  def runDpIndIdx(): Unit = {
     val addX :: fetchL :: fetchH :: arith :: storeRam :: Nil = Enum(5)
     val dpIndXState = RegInit(addX)
     val dp = readData0
@@ -720,11 +723,11 @@ class Core extends Module {
       RegType.Y -> regs.y
     ))
 
-    val isStore = inst.opcode === 0xD4.U | inst.opcode === 0xDB.U | inst.opcode === 0xD9.U
+    val isStore = inst.opcode === 0xC7.U
 
     switch(dpIndXState) {
       is(addX) {
-        dpAddr := dp + idx
+        dpAddr := dp + regs.x
         dpIndXState := fetchL
       }
       is(fetchL) {
@@ -805,6 +808,634 @@ class Core extends Module {
     }
   }
 
+  private def runDpRel(): Unit = {
+    val fetchOp :: calcCond :: fetchOffset :: Nil = Enum(3)
+    val dpRelState = RegInit(fetchOp)
+    val operand = Reg(UInt(8.W))
+    val dpAddr = readData0
+    val idx = inst.opcode(15, 13)
+
+    def isBranch(): Bool = {
+      MuxLookup(inst.ops, false.B, Seq(
+         Ops.BBS ->  getBit(idx, operand),
+         Ops.BBC -> !getBit(idx, operand),
+        Ops.CBNE ->  (regs.a =/= operand),
+        Ops.DBNZ ->  (regs.y =/= operand),
+      ))
+    }
+
+    switch(dpRelState) {
+      is(fetchOp) {
+        operand := readDp(dpAddr)
+        dpRelState := calcCond
+      }
+      is(calcCond) {
+        when(inst.ops === Ops.DBNZ) {
+          operand := operand - 1.U
+          writeAbs(dpAddr, operand - 1.U)
+        }
+
+        dpRelState := fetchOffset
+      }
+      is(fetchOffset) {
+        jmpOffset := readAbs(regs.pc).asSInt()
+        regs.pc := regs.pc + 1.U
+
+        when(isBranch()) {
+          globalState := jump
+        } .otherwise {
+          globalState := fetch
+        }
+
+        dpRelState := fetchOp
+      }
+    }
+  }
+
+  private def runDpIdx(idx: UInt): Unit = {
+    val addIdx :: fetchData :: storeRam :: Nil = Enum(3)
+    val dpIdxState = RegInit(addIdx)
+    val isStore = inst.opcode === 0xD4.U | inst.opcode === 0xDB.U | inst.opcode === 0xD9.U
+    val dp = readData0
+    val dpAddr = Reg(UInt(8.W))
+    val regType = RegType()
+    regType := MuxLookup(inst.opcode, RegType.A, Seq(
+      0xF9.U -> RegType.X,
+      0xFB.U -> RegType.Y,
+      0xDB.U -> RegType.Y,
+      0xD9.U -> RegType.X,
+    ))
+    val operand = MuxLookup(regType, regs.a, Seq(
+      RegType.X -> regs.x,
+      RegType.Y -> regs.y,
+    ))
+
+    switch(dpIdxState) {
+      is(addIdx) {
+        dpAddr := dp + idx
+        dpIdxState := fetchData
+      }
+      is(fetchData) {
+        val data = readDp(dpAddr)
+        when(isStore) {
+          dpIdxState := storeRam
+        } .otherwise {
+          val out = runByteALU(inst.ops, operand, data)
+          switch(regType) {
+            is(RegType.A) { regs.a := out }
+            is(RegType.X) { regs.x := out }
+            is(RegType.Y) { regs.y := out }
+          }
+
+          dpIdxState := addIdx
+          globalState := fetch
+        }
+      }
+      is(storeRam) {
+        writeDp(dpAddr, operand)
+
+        dpIdxState := addIdx
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runDpXRMW(): Unit = {
+    val addX :: fetchData :: storeResult :: Nil = Enum(3)
+    val dpXRMWState = RegInit(addX)
+    val dp = readData0
+    val dpAddr = Reg(UInt(8.W))
+    val result = Reg(UInt(8.W))
+
+    switch(dpXRMWState) {
+      is(addX) {
+        dpAddr := dp + regs.x
+        dpXRMWState := fetchData
+      }
+      is(fetchData) {
+        val data = readDp(dpAddr)
+        result := runByteALU(inst.ops, data, data)
+        dpXRMWState := storeResult
+      }
+      is(storeResult) {
+        writeDp(dpAddr, result)
+        dpXRMWState := addX
+        globalState := fetch
+      }
+    }
+  }
+
+  // for CBNE
+  private def runDpXRel(): Unit = {
+    val addX :: fetchData :: none :: execBranch :: Nil = Enum(4)
+    val dpXRelState = RegInit(addX)
+    val dp = readData0
+    val dpAddr = Reg(UInt(8.W))
+    val data = Reg(UInt(8.W))
+
+    switch(dpXRelState) {
+      is(addX) {
+        dpAddr := dp + regs.x
+        dpXRelState := fetchData
+      }
+      is(fetchData) {
+        data := readDp(dpAddr)
+        dpXRelState := none
+      }
+      is(none) {
+        dpXRelState := execBranch
+      }
+      is(execBranch) {
+        jmpOffset := readDp(regs.pc).asSInt()
+        regs.pc := regs.pc + 1.U
+
+        val isBranch = regs.a =/= data
+        when(isBranch) {
+          globalState := jump
+        } .otherwise {
+          globalState := fetch
+        }
+
+        dpXRelState := addX
+      }
+    }
+  }
+
+  private def runIndX(needInc: Bool): Unit = {
+    val fetchData :: storeRam :: Nil = Enum(2)
+    val indXState = RegInit(fetchData)
+    val isStore = inst.opcode === 0xC6.U
+
+    switch(indXState) {
+      is(fetchData) {
+        val data = readDp(regs.x)
+
+        indXState := storeRam
+        when(!isStore) {
+          val out = runByteALU(inst.ops, regs.a, data)
+          regs.a := out
+
+          when(needInc) {
+            regs.x := regs.x + 1.U
+          }
+
+          indXState := fetchData
+          globalState := fetch
+        }
+      }
+      is(storeRam) {
+        writeDp(regs.x, regs.a)
+
+        when(needInc) {
+          regs.x := regs.x + 1.U
+        }
+
+        indXState := fetchData
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runIndXIndY(): Unit = {
+    val fetchY :: fetchX :: storeResult :: Nil = Enum(3)
+    val indXIndYState = RegInit(fetchY)
+    val dataX = Reg(UInt(8.W))
+    val dataY = Reg(UInt(8.W))
+
+    switch(indXIndYState) {
+      is(fetchY) {
+        dataY := readDp(regs.y)
+        indXIndYState := fetchX
+      }
+      is(fetchX) {
+        dataX := readDp(regs.x)
+        indXIndYState := storeResult
+      }
+      is(storeResult) {
+        val out = runByteALU(inst.ops, dataX, dataY)
+        when(inst.ops =/= Ops.CMP) {
+          writeDp(regs.x, out)
+        }
+
+        indXIndYState := fetchY
+        globalState   := fetch
+      }
+    }
+  }
+
+  private def runBitMan(): Unit = {
+    val fetchAddrH :: fetchData :: writeRamNOT :: writeRamMOV :: Nil = Enum(4)
+    val addrL = readData0
+    val addrH = Reg(UInt(5.W))
+    val idx   = Reg(UInt(3.W))
+    val stored = Reg(UInt(8.W))
+    val bitManState = RegInit(fetchAddrH)
+
+    val needRev    = inst.opcode === 0x2A.U | inst.opcode === 0x6A.U
+    val isStoreMOV = inst.opcode === 0xCA.U
+    val isNOT      = inst.opcode === 0xEA.U
+    val isDstRam   = isNOT | isStoreMOV
+    val only4Cycle = inst.opcode === 0xAA.U | inst.opcode === 0x4A.U | inst.opcode === 0x6A.U
+
+    switch(bitManState) {
+      is(fetchAddrH) {
+        val fetched = readAbs(regs.pc)
+        regs.pc := regs.pc + 1.U
+
+        addrH := fetched.tail(3)
+        idx   := fetched.head(3)
+        bitManState := fetchData
+      }
+      is(fetchData) {
+        val data = readAbs(Cat(addrH, addrL))
+        val bit = getBit(idx, data)
+        val res0 = Bool()
+        res0 := MuxLookup(regs.psw.carry, inst.ops, Seq(
+          Ops.AND -> (regs.psw.carry & bit),
+          Ops.OR  -> (regs.psw.carry | bit),
+          Ops.EOR -> (regs.psw.carry ^ bit),
+          Ops.NOT -> (!bit),
+          Ops.MOV -> Mux(isStoreMOV, regs.psw.carry, bit),
+        ))
+        val res1 = Mux(needRev, !res0, res0).asBool()
+        stored := setBit(data, res1, idx)
+
+        when(!isDstRam) {
+          regs.psw.carry := res1
+        }
+
+        bitManState := writeRamNOT
+        when(only4Cycle) {
+          bitManState := fetchAddrH
+          globalState := fetch
+        }
+      }
+      is(writeRamNOT) {
+        bitManState := fetchAddrH
+        globalState := fetch
+
+        when(isNOT) {
+          writeAbs(Cat(addrH, addrL), stored)
+        }
+        when(isStoreMOV) {
+          bitManState := writeRamMOV
+          globalState := exec
+        }
+      }
+      is(writeRamMOV) {
+        writeAbs(Cat(addrH, addrL), stored)
+
+        bitManState := fetchAddrH
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runRelDBNZ(): Unit = {
+    val decY :: execCond :: Nil = Enum(2)
+    val relDBNZState = RegInit(decY)
+    val isBranch = regs.y === 0.U
+
+      switch(relDBNZState) {
+      is(decY) {
+        regs.y := regs.y - 1.U
+        relDBNZState := execCond
+      }
+      is(execCond) {
+        jmpOffset := readAbs(regs.pc).asSInt()
+        regs.pc := regs.pc + 1.U
+
+        relDBNZState := decY
+        when(isBranch) {
+          globalState := jump
+        }.otherwise {
+          globalState := fetch
+        }
+      }
+    }
+  }
+
+  private def runMUL(): Unit = {
+    val mul :: wait :: Nil = Enum(2)
+    val mulState = RegInit(mul)
+    val waitCounter = RegInit(0.U)
+
+    switch(mulState) {
+      is(mul) {
+        val result = regs.y * regs.a
+        regs.a := result( 7, 0)
+        regs.y := result(15, 8)
+        regs.psw.sign := result(15)
+        regs.psw.zero := result === 0.U
+
+        mulState := wait
+      }
+      is(wait) {
+        waitCounter := waitCounter + 1.U
+        when(waitCounter === 4.U) {
+          waitCounter := 0.U
+          mulState := mul
+          globalState := fetch
+        }
+      }
+    }
+  }
+
+  private def runDIV(): Unit = {
+    val setPSW :: normalDiv :: erroneousDiv0 :: erroneousDiv1 :: wait :: Nil = Enum(3)
+    val divState = RegInit(setPSW)
+    val dividedForDiv = Reg(UInt(16.W))
+    val dividedForMod = Reg(UInt(16.W))
+    val divider = Reg(UInt(16.W))
+    val waitCounter = RegInit(0.U)
+
+    switch(divState) {
+      is(setPSW) {
+        regs.psw.overflow := regs.y >= regs.x
+        regs.psw.half := regs.y(3, 0)
+
+        when(regs.y < Cat(regs.x, 0.U(1.W))) {
+          divState := normalDiv
+        }.otherwise {
+          divState := erroneousDiv0
+        }
+      }
+      is(normalDiv) {
+        val ya = Cat(regs.y, regs.a)
+        regs.a := ya / regs.x
+        regs.y := ya % regs.x
+
+        divState := wait
+      }
+      is(erroneousDiv0) {
+        val ya = Cat(regs.y, regs.a)
+        val operand = ya - Cat(regs.x, 0.U(9.W))
+        dividedForDiv := 255.U - operand
+        dividedForMod := regs.x + operand
+        divider := 256.U - regs.x
+
+        divState := erroneousDiv1
+      }
+      is(erroneousDiv1) {
+        regs.a := dividedForDiv / divider
+        regs.y := dividedForMod % divider
+
+        waitCounter := 1.U
+        divState := wait
+      }
+      is(wait) {
+        waitCounter := waitCounter + 1.U
+
+        when(waitCounter === 7.U) {
+          regs.psw.zero := regs.a === 0.U
+          regs.psw.zero := regs.a.head(1).toBool()
+
+          waitCounter := 0.U
+          divState := setPSW
+          globalState := fetch
+        }
+      }
+    }
+  }
+
+  private def runDAA(): Unit = {
+    val firstCond = regs.psw.carry | regs.a > 0x99.U
+    val tmp = UInt(8.W)
+    tmp := regs.a
+    when(firstCond) {
+      tmp := regs.a + 0x60.U
+      regs.psw.carry := true.B
+    }
+
+    val secondCond = regs.psw.half | tmp(3, 0) > 0x09.U
+    val ret = UInt(8.W)
+    ret := tmp
+    when(secondCond) {
+      ret := tmp + 0x06.U
+    }
+
+    regs.a        := ret
+    regs.psw.sign := ret.head(1).toBool()
+    regs.psw.zero := ret === 0.U
+
+    globalState := fetch
+  }
+
+  private def runDAS(): Unit = {
+    val firstCond = !regs.psw.carry | regs.a > 0x99.U
+    val tmp = UInt(8.W)
+    tmp := regs.a
+    when(firstCond) {
+      tmp := regs.a - 0x60.U
+      regs.psw.carry := false.B
+    }
+
+    val secondCond = !regs.psw.half | regs.a(3, 0) > 0x09.U
+    val ret = UInt(8.W)
+    ret := tmp
+    when(secondCond) {
+      ret := tmp - 0x06.U
+    }
+
+    regs.a        := ret
+    regs.psw.sign := ret.head(1).toBool()
+    regs.psw.zero := ret === 0.U
+
+    globalState := fetch
+  }
+
+  private def runXCN(): Unit = {
+    val waitCount = RegInit(0.U)
+    waitCount := waitCount + 1.U
+    when(waitCount === 2.U) {
+      val ret = Cat(regs.a(3, 0), regs.a(7, 4))
+      regs.a := ret
+      regs.psw.sign := ret.head(1).toBool()
+      regs.psw.zero := ret === 0.U
+
+      waitCount := 0.U
+      globalState := fetch
+    }
+  }
+
+  private def runTCLR()
+
+  private def runBRK(): Unit = {
+    val writePCH :: writePCL :: writePSW :: renewPSW :: fetchPCL :: fetchPCH :: Nil = Enum(6)
+    val brkState = RegInit(writePCH)
+    val pcL = Reg(UInt(8.W))
+
+    switch(brkState) {
+      is(writePCH) {
+        pushStack(regs.pc(15, 8))
+        brkState := writePCL
+      }
+      is(writePCL) {
+        pushStack(regs.pc(7, 0))
+        brkState := writePSW
+      }
+      is(writePSW) {
+        pushStack(regs.psw.get)
+        brkState := renewPSW
+      }
+      is(renewPSW) {
+        regs.psw.break     := true.B
+        regs.psw.interrupt := false.B
+        brkState := fetchPCL
+      }
+      is(fetchPCL) {
+        pcL := readAbs(0xFFDE.U)
+        brkState := fetchPCH
+      }
+      is(fetchPCH) {
+        regs.pc := Cat(readAbs(0xFFDF.U), pcL)
+        brkState := writePCH
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runRETI(): Unit = {
+    val none :: popPSW :: popPCL :: popPCH :: Nil = Enum(4)
+    val retiState = RegInit(none)
+    val pcL = Reg(UInt(8.W))
+
+    switch(retiState) {
+      is(none) { retiState := popPSW }
+      is(popPSW) {
+        val psw = popStack()
+        regs.psw.set(psw)
+
+        retiState := popPCL
+      }
+      is(popPCL) {
+        pcL := popStack()
+        retiState := popPCH
+      }
+      is(popPCH) {
+        regs.pc := Cat(popStack(), pcL)
+        retiState := none
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runPUSH(): Unit = {
+    val push :: none :: Nil = Enum(2)
+    val pushState = RegInit(push)
+    val pushed = MuxLookup(inst.opcode, regs.a, Seq(
+      0x2D.U -> regs.a,
+      0x4D.U -> regs.x,
+      0x6D.U -> regs.y,
+      0x0D.U -> regs.psw
+    ))
+    switch(pushState) {
+      is(push) {
+        pushStack(pushed.asUInt())
+        pushState := none
+      }
+      is(none) {
+        pushState := push
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runPOP(): Unit = {
+    val none :: pop :: Nil = Enum(2)
+    val popState = RegInit(none)
+
+    switch(popState) {
+      is(none) { popState := pop }
+      is(pop) {
+        val data = popStack()
+        switch(inst.opcode) {
+          is(0xAE.U) { regs.a := data }
+          is(0xCE.U) { regs.x := data }
+          is(0xEE.U) { regs.y := data }
+          is(0x8E.U) { regs.psw.set(data) }
+        }
+      }
+    }
+  }
+
+  private def runTCALL(): Unit = {
+    val none0 :: pushPCH :: pushPCL :: calcAddr :: fetchPCL :: fetchPCH :: Nil = Enum(6)
+    val fetchAddr = Reg(UInt(16.W))
+    val tcallState = RegInit(none0)
+    val pcL = Reg(UInt(8.W))
+
+
+    switch(tcallState) {
+      is(none0) { tcallState := pushPCH }
+      is(pushPCH) {
+        pushStack(regs.pc(15, 8))
+        tcallState := pushPCL
+      }
+      is(pushPCL) {
+        pushStack(regs.pc(7, 0))
+        tcallState := calcAddr
+      }
+      is(calcAddr) {
+        val idx = Cat(inst.opcode(7, 4), 0.U(1.W))
+        fetchAddr := 0xFFDE.U - idx
+        tcallState := fetchPCL
+      }
+      is(fetchPCL) {
+        pcL := readAbs(fetchAddr)
+        fetchAddr := fetchAddr + 1.U
+        tcallState := fetchPCH
+      }
+      is(fetchPCH) {
+        regs.pc := Cat(readAbs(fetchAddr), pcL)
+
+        tcallState  := none0
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runPCALL(): Unit = {
+    val none :: pushPCH :: pushPCL :: setPC :: Nil = Enum(4)
+    val pcallState = RegInit(none)
+
+    switch(pcallState) {
+      is(none) { pcallState := pushPCH }
+      is(pushPCH) {
+        pushStack(regs.pc(15, 8))
+        pcallState := pushPCL
+      }
+      is(pushPCL) {
+        pushStack(regs.pc(7, 0))
+        pcallState := setPC
+      }
+      is(setPC) {
+        regs.pc := Cat(0xFF.U, inst.opcode(3, 0))
+        pcallState := none
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runRET(): Unit = {
+    val none :: popPCL :: popPCH :: Nil = Enum(3)
+    val retState = RegInit(none)
+    val pcl = Reg(UInt(8.W))
+
+    switch(retState) {
+      is(none) { retState := popPCL }
+      is(popPCL) {
+        pcl := popStack()
+        retState := popPCH
+      }
+      is(popPCH) {
+        regs.pc := Cat(popStack(), pcl)
+        retState    := none
+        globalState := fetch
+      }
+    }
+  }
+
   private def jumpState(): Unit = {
     val jump0 :: jump1 :: Nil = Enum(2)
     val jmpState = RegInit(jump0)
@@ -873,7 +1504,21 @@ class Core extends Module {
     io.ramReadData
   }
 
-  private def bitManipulation(src: UInt, bit: Bool, idx: UInt): UInt = {
+  private def getBit(idx: UInt, byte: UInt): Bool = {
+    val bits = byte.toBools()
+    MuxLookup(idx, false.B, Seq(
+      0.U -> bits(0),
+      1.U -> bits(1),
+      2.U -> bits(2),
+      3.U -> bits(3),
+      4.U -> bits(4),
+      5.U -> bits(5),
+      6.U -> bits(6),
+      7.U -> bits(7),
+    ))
+  }
+
+  private def setBit(src: UInt, bit: Bool, idx: UInt): UInt = {
     val srcBits = VecInit(src.toBools())
     val ret = UInt(8.W)
 

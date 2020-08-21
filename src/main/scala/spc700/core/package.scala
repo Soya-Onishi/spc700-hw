@@ -33,6 +33,17 @@ package object core {
     val sign: Bool      = Bool()
 
     def get: UInt = Cat(sign, overflow, page, break, half, interrupt, zero, carry)
+    def set(byte: UInt): Unit = {
+      this.carry     := byte(0)
+      this.zero      := byte(1)
+      this.interrupt := byte(2)
+      this.half      := byte(3)
+      this.break     := byte(4)
+      this.page      := byte(5)
+      this.overflow  := byte(6)
+      this.sign      := byte(7)
+    }
+
   }
 
   object PSW {
@@ -44,7 +55,7 @@ package object core {
     val    AbsX,     AbsY,     Acc,  DpCalc,     DpRMW,    DpCMPW = Value
     val  DpWord,   DpINCW,    DpINC,   DpDp,     DpImm,    DpIndX,  DpIndY = Value
     val   DpRel,      DpX,  DpXRMW,  DpXRel,       DpY,      IndX = Value
-    val IndXInc, IndXIndY,     Imm, BitMan,     Branch,    PSWMan = Value
+    val IndXInc, IndXIndY,     Imm,  BitMan,    Branch,    PSWMan = Value
     val RelDBNZ,  Special                                         = Value
   }
 
