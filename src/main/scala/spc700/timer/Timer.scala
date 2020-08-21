@@ -48,6 +48,7 @@ class Timer(hz: Int) extends Module {
 
   when(io.makeDisable) {
     enable := false.B
+    count := 0.U
   }
 
   when(io.readEn) {
