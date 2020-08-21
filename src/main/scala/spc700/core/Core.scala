@@ -2,7 +2,7 @@ package spc700.core
 
 import chisel3._
 import chisel3.experimental.ChiselEnum
-import chisel3.util.{Cat, Enum, is, switch, SwitchContext}
+import chisel3.util.{Cat, Enum, MuxCase, MuxLookup, SwitchContext, is, switch}
 
 class Core extends Module {
   override val io = IO(new Bundle{
@@ -622,7 +622,187 @@ class Core extends Module {
         globalState := fetch
       }
     }
+  }
 
+  def runDpDp(): Unit = {
+    val fetchFirst :: fetchNextAddr :: calculation :: storeResult :: Nil = Enum(4)
+    val dpdpState = RegInit(fetchFirst)
+    val secondData = Reg(UInt(8.W))
+    val secondAddr = readData0
+    val firstAddr = Reg(UInt(8.W))
+    val result = Reg(UInt(8.W))
+
+    switch(dpdpState) {
+      is(fetchFirst) {
+        secondData := readDp(secondAddr)
+        dpdpState := fetchNextAddr
+      }
+      is(fetchNextAddr) {
+        firstAddr := readAbs(regs.pc)
+        regs.pc := regs.pc + 1.U
+        dpdpState := calculation
+      }
+      is(calculation) {
+        // first data is not needed for MOV
+        val firstData = UInt(8.W)
+        firstData := DontCare
+        when(inst.ops =/= Ops.MOV) {
+          firstData := readDp(firstAddr)
+        }
+
+        result := runByteALU(inst.ops, firstData, secondData)
+
+        // Only MOV is finished at this state
+        dpdpState := storeResult
+        when(inst.ops === Ops.MOV) {
+          writeDp(firstAddr, secondData)
+          dpdpState := fetchFirst
+          globalState := fetch
+        }
+      }
+      is(storeResult) {
+        when(inst.ops =/= Ops.CMP) {
+          writeDp(firstAddr, result)
+        }
+
+        dpdpState := fetchFirst
+        globalState := fetch
+      }
+    }
+  }
+
+  def runDpImm(): Unit = {
+    val fetchDpAddr :: fetchData :: storeResult :: Nil = Enum(3)
+    val dpImmState = RegInit(fetchDpAddr)
+    val imm = readData0
+    val dpAddr = Reg(UInt(8.W))
+    val dpData = Reg(UInt(8.W))
+
+    switch(dpImmState) {
+      is(fetchDpAddr) {
+        dpAddr := readAbs(regs.pc)
+        regs.pc := regs.pc + 1.U
+        dpImmState := fetchData
+      }
+      is(fetchData) {
+        dpData := readDp(dpAddr)
+        dpImmState := storeResult
+      }
+      is(storeResult) {
+        val out = runByteALU(inst.ops, dpData, imm)
+        when(inst.ops =/= Ops.CMP) {
+          writeDp(dpAddr, out)
+        }
+
+        dpImmState := fetchDpAddr
+        globalState := fetch
+      }
+    }
+  }
+
+  def runDpIdx(idx: UInt): Unit = {
+    val addX :: fetchL :: fetchH :: arith :: storeRam :: Nil = Enum(5)
+    val dpIndXState = RegInit(addX)
+    val dp = readData0
+    val dpAddr = Reg(UInt(8.W))
+    val addrL = Reg(UInt(8.W))
+    val addrH = Reg(UInt(8.W))
+    val regType = RegType()
+    regType := RegType.A
+    switch(inst.opcode) {
+      is(0xF9.U) { regType := RegType.X }
+      is(0xFB.U) { regType := RegType.Y }
+      is(0xDB.U) { regType := RegType.Y }
+      is(0xD9.U) { regType := RegType.X }
+    }
+    val op = MuxLookup(regType, regs.a, Seq(
+      RegType.X -> regs.x,
+      RegType.Y -> regs.y
+    ))
+
+    val isStore = inst.opcode === 0xD4.U | inst.opcode === 0xDB.U | inst.opcode === 0xD9.U
+
+    switch(dpIndXState) {
+      is(addX) {
+        dpAddr := dp + idx
+        dpIndXState := fetchL
+      }
+      is(fetchL) {
+        addrL := readDp(dpAddr)
+        dpAddr := dpAddr + 1.U
+        dpIndXState := fetchH
+      }
+      is(fetchH) {
+        addrH := readDp(dpAddr)
+        dpIndXState := arith
+      }
+      is(arith) {
+        val addr = Cat(addrH, addrL)
+        val data = readAbs(addr)
+
+        when(isStore) {
+          dpIndXState := storeRam
+        }.otherwise {
+          val out = runByteALU(inst.ops, op, data)
+          switch(regType) {
+            is(RegType.A) { regs.a := out }
+            is(RegType.X) { regs.x := out }
+            is(RegType.Y) { regs.y := out }
+          }
+
+          dpIndXState := addX
+          globalState := fetch
+        }
+      }
+      is(storeRam) {
+        val addr = Cat(addrH, addrL)
+        writeAbs(addr, op)
+
+        dpIndXState := addX
+        globalState := fetch
+      }
+    }
+  }
+
+  private def runDpIndY(): Unit = {
+    val fetchAddrL :: fetchAddrH :: addY :: arith :: storeRam :: Nil = Enum(5)
+    val dpIndYState = RegInit(fetchAddrL)
+    val dpAddr = readData0
+    val addrL = Reg(UInt(8.W))
+    val addrH = Reg(UInt(8.W))
+    val addrY = Reg(UInt(8.W))
+    val isStore = inst.opcode === 0xD7.U
+
+    switch(dpIndYState) {
+      is(fetchAddrL) {
+        addrL := readDp(dpAddr)
+        dpIndYState := fetchAddrH
+      }
+      is(fetchAddrH) {
+        addrH := readDp(dpAddr + 1.U)
+        dpIndYState := addY
+      }
+      is(addY) {
+        addrY := Cat(addrH, addrL) + regs.y
+        dpIndYState := arith
+      }
+      is(arith) {
+        val data = readAbs(addrY)
+
+        when(isStore) {
+          dpIndYState := storeRam
+        } .otherwise {
+          regs.a := runByteALU(inst.ops, regs.a, data)
+          dpIndYState := fetchAddrL
+          globalState := fetch
+        }
+      }
+      is(storeRam) {
+        writeAbs(addrY, regs.a)
+        dpIndYState := fetchAddrL
+        globalState := fetch
+      }
+    }
   }
 
   private def jumpState(): Unit = {
