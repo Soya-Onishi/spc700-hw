@@ -39,7 +39,7 @@ class Core extends Module {
   switch(globalState) {
     is(fetch) { fetchState() }
     is(decode) { decodeState() }
-    is(exec) { }
+    is(exec) { execState() }
     is(jump) { jumpState() }
     is(sleep) { /* nothing to do */ }
   }
@@ -72,10 +72,70 @@ class Core extends Module {
       execBranchByPSW(inst, data)
     }.elsewhen(inst.addressing === Addressing.PSWMan) {
       manPSWDecode(inst.ops)
+    }.elsewhen(inst.ops === Ops.NOP){
+      regs.pc := regs.pc + 1.U
+      globalState := fetch
     }.otherwise{
       regs.pc := regs.pc + 1.U
       readData0 := data
       globalState := exec
+    }
+  }
+
+  private def execState(): Unit = {
+    switch(inst.addressing){
+      is(Addressing.PSWMan) { manPSWExec() }
+      is(Addressing.AbsCalc) { runAbsArith() }
+      is(Addressing.AbsCall) { runAbsCall() }
+      is(Addressing.AbsJmp) { runAbsJmp() }
+      is(Addressing.AbsRMW) { runAbsRMW() }
+      is(Addressing.AbsRMWBit) { runAbsRMWBit() }
+      is(Addressing.AbsIdxInd) {
+        val opcodes = Vector(0xF6, 0xD6, 0x16, 0x36, 0x56, 0x76, 0x96, 0xB6, 0xD6, 0xF6)
+        val isRequireY = opcodes
+          .map(inst.opcode === _.U)
+          .foldLeft(false.B){ case (left, right) => left | right }
+
+        val idx = Mux(isRequireY, regs.y, regs.x)
+        runAbsIndex(idx)
+      }
+      is(Addressing.DpCalc) { runDpArith() }
+      is(Addressing.DpRMW) { runDpRMW() }
+      is(Addressing.DpCMPW) { runDpCMPW() }
+      is(Addressing.DpWord) { runDpWord() }
+      is(Addressing.DpINCW) { runDpINCW() }
+      is(Addressing.DpDp) { runDpDp() }
+      is(Addressing.DpImm) { runDpImm() }
+      is(Addressing.DpIndX) { runDpIndX() }
+      is(Addressing.DpIndY) { runDpIndY() }
+      is(Addressing.DpRel) { runDpRel() }
+      is(Addressing.DpX) { runDpIdx(regs.x) }
+      is(Addressing.DpY) { runDpIdx(regs.y) }
+      is(Addressing.DpXRMW) { runDpXRMW() }
+      is(Addressing.DpXRel) { runDpXRel() }
+      is(Addressing.IndX) { runIndX(false) }
+      is(Addressing.IndXInc) { runIndX(true) }
+      is(Addressing.IndXIndY) { runIndXIndY() }
+      is(Addressing.BitMan) { runBitMan() }
+      is(Addressing.RelDBNZ) { runRelDBNZ() }
+      is(Addressing.Special) {
+        switch(inst.ops) {
+          is(Ops.MUL) { runMUL() }
+          is(Ops.DIV) { runDIV() }
+          is(Ops.DAA) { runDAA() }
+          is(Ops.DAS) { runDAS() }
+          is(Ops.XCN) { runXCN() }
+          is(Ops.BRK) { runBRK() }
+          is(Ops.RET) { runRET() }
+          is(Ops.RETI) { runRETI() }
+          is(Ops.PUSH) { runPUSH() }
+          is(Ops.POP) { runPOP() }
+          is(Ops.TCALL) { runTCALL() }
+          is(Ops.PCALL) { runPCALL() }
+          is(Ops.SLEEP) { globalState := sleep }
+          is(Ops.STOP) { globalState := sleep }
+        }
+      }
     }
   }
 
@@ -175,8 +235,6 @@ class Core extends Module {
   }
 
   private def manPSWDecode(ops: Ops.Type): Unit = {
-    regs.pc := regs.pc + 1.U
-
     switch(ops) {
       is(Ops.CLRP) { regs.psw.page  := false.B }
       is(Ops.SETP) { regs.psw.page  := true.B  }
@@ -378,7 +436,7 @@ class Core extends Module {
   }
 
   // run Absolute + Index addressing mode
-  // Abs+X or Abs+Y
+  // [Abs+X] or [Abs+Y]
   // idx is regs.x or regs.y
   private def runAbsIndex(idx: UInt): Unit = {
     val fetchAbsH :: addIndex :: fetchData :: storeResult :: Nil = Enum(4)
@@ -703,7 +761,7 @@ class Core extends Module {
 
 
   // For [[dp+X]]
-  def runDpIndIdx(): Unit = {
+  def runDpIndX(): Unit = {
     val addX :: fetchL :: fetchH :: arith :: storeRam :: Nil = Enum(5)
     val dpIndXState = RegInit(addX)
     val dp = readData0
@@ -852,6 +910,7 @@ class Core extends Module {
     }
   }
 
+  // for [dp+X] or [dp+Y] addressing mode
   private def runDpIdx(idx: UInt): Unit = {
     val addIdx :: fetchData :: storeRam :: Nil = Enum(3)
     val dpIdxState = RegInit(addIdx)
@@ -961,7 +1020,7 @@ class Core extends Module {
     }
   }
 
-  private def runIndX(needInc: Bool): Unit = {
+  private def runIndX(needInc: Boolean): Unit = {
     val fetchData :: storeRam :: Nil = Enum(2)
     val indXState = RegInit(fetchData)
     val isStore = inst.opcode === 0xC6.U
@@ -975,9 +1034,8 @@ class Core extends Module {
           val out = runByteALU(inst.ops, regs.a, data)
           regs.a := out
 
-          when(needInc) {
+          if(needInc)
             regs.x := regs.x + 1.U
-          }
 
           indXState := fetchData
           globalState := fetch
@@ -986,9 +1044,8 @@ class Core extends Module {
       is(storeRam) {
         writeDp(regs.x, regs.a)
 
-        when(needInc) {
+        if(needInc)
           regs.x := regs.x + 1.U
-        }
 
         indXState := fetchData
         globalState := fetch
@@ -1257,8 +1314,6 @@ class Core extends Module {
       globalState := fetch
     }
   }
-
-  private def runTCLR()
 
   private def runBRK(): Unit = {
     val writePCH :: writePCL :: writePSW :: renewPSW :: fetchPCL :: fetchPCH :: Nil = Enum(6)
