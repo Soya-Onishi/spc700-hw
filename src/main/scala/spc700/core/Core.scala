@@ -776,9 +776,10 @@ class Core extends Module {
       is(0xDB.U) { regType := RegType.Y }
       is(0xD9.U) { regType := RegType.X }
     }
-    val op = MuxLookup(regType, regs.a, Seq(
-      RegType.X -> regs.x,
-      RegType.Y -> regs.y
+    val op = UInt(8.W)
+    op := MuxLookup(regType.asUInt(), regs.a, Seq(
+      RegType.X.asUInt() -> regs.x,
+      RegType.Y.asUInt() -> regs.y
     ))
 
     val isStore = inst.opcode === 0xC7.U
@@ -874,12 +875,15 @@ class Core extends Module {
     val idx = inst.opcode(15, 13)
 
     def isBranch(): Bool = {
-      MuxLookup(inst.ops, false.B, Seq(
-         Ops.BBS ->  getBit(idx, operand),
-         Ops.BBC -> !getBit(idx, operand),
-        Ops.CBNE ->  (regs.a =/= operand),
-        Ops.DBNZ ->  (regs.y =/= operand),
+      val ret = Bool()
+      ret := MuxLookup(inst.ops.asUInt(), false.B, Seq(
+         Ops.BBS.asUInt() ->  getBit(idx, operand),
+         Ops.BBC.asUInt() -> !getBit(idx, operand),
+        Ops.CBNE.asUInt() ->  (regs.a =/= operand),
+        Ops.DBNZ.asUInt() ->  (regs.y =/= operand),
       ))
+
+      ret
     }
 
     switch(dpRelState) {
@@ -924,9 +928,10 @@ class Core extends Module {
       0xDB.U -> RegType.Y,
       0xD9.U -> RegType.X,
     ))
-    val operand = MuxLookup(regType, regs.a, Seq(
-      RegType.X -> regs.x,
-      RegType.Y -> regs.y,
+    val operand = UInt(8.W)
+    operand := MuxLookup(regType.asUInt(), regs.a, Seq(
+      RegType.X.asUInt() -> regs.x,
+      RegType.Y.asUInt() -> regs.y,
     ))
 
     switch(dpIdxState) {
@@ -1107,12 +1112,12 @@ class Core extends Module {
         val data = readAbs(Cat(addrH, addrL))
         val bit = getBit(idx, data)
         val res0 = Bool()
-        res0 := MuxLookup(regs.psw.carry, inst.ops, Seq(
-          Ops.AND -> (regs.psw.carry & bit),
-          Ops.OR  -> (regs.psw.carry | bit),
-          Ops.EOR -> (regs.psw.carry ^ bit),
-          Ops.NOT -> (!bit),
-          Ops.MOV -> Mux(isStoreMOV, regs.psw.carry, bit),
+        res0 := MuxLookup(inst.ops.asUInt(), regs.psw.carry, Seq(
+          Ops.AND.asUInt() -> (regs.psw.carry & bit),
+          Ops.OR.asUInt()  -> (regs.psw.carry | bit),
+          Ops.EOR.asUInt() -> (regs.psw.carry ^ bit),
+          Ops.NOT.asUInt() -> (!bit),
+          Ops.MOV.asUInt() -> Mux(isStoreMOV, regs.psw.carry, bit),
         ))
         val res1 = Mux(needRev, !res0, res0).asBool()
         stored := setBit(data, res1, idx)
