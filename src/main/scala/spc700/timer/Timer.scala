@@ -4,6 +4,9 @@ import chisel3._
 
 class Timer(hz: Int) extends Module {
   val io = IO(new Bundle{
+    val initEnable = Input(Bool())
+    val initDivider = Input(UInt(8.W))
+
     val makeEnable  = Input(Bool())
     val makeDisable = Input(Bool())
 
@@ -19,9 +22,9 @@ class Timer(hz: Int) extends Module {
     case 64000 => 32
   }
 
-  val enable = RegInit(false.B)
+  val enable = RegInit(io.initEnable)
   val cycleCount = RegInit(0.U)
-  val divided = RegInit(0.U(8.W))
+  val divided = RegInit(io.initDivider)
   val divider = Reg(UInt(8.W))
   val count = RegInit(0.U(4.W))
 
@@ -56,6 +59,8 @@ class Timer(hz: Int) extends Module {
   }
 
   when(io.writeEn) {
+    // In Fullsnes, divider is reloaded when making timer enable,
+    // so this implementation may cause problems.
     divider := io.divider
   }
 }

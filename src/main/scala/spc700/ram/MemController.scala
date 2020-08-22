@@ -21,9 +21,9 @@ class MemController extends Module {
     val wDspData = Output(UInt(8.W))
     val rdspData = Input(UInt(8.W))
 
+    // related to Timer
     val setTimerDivider = Output(Vec(3, Bool()))
     val newDivider = Output(Vec(3, UInt(8.W)))
-
     val readTimer = Output(Vec(3, Bool()))
     val timerOut = Input(Vec(3, UInt(8.W)))
 
