@@ -148,6 +148,7 @@ class Envelope extends Module {
   }
 
   private def renewLevel(newLevel: SInt, rate: UInt, immediate: Bool): SInt = {
+    // I don't know whether this implementation is correct or not
     val isRenew = (counter + counterOffset(rate)) === rateTable(rate) | immediate
 
     when(isRenew) {
@@ -156,8 +157,4 @@ class Envelope extends Module {
 
     Mux(isRenew, level, newLevel)
   }
-}
-
-object Envelope {
-
 }

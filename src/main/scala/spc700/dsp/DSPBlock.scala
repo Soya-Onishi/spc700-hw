@@ -21,6 +21,8 @@ class DSPBlock(val idx: Int) extends Module {
     val gaussianFilter = Input(Vec(4, UInt(12.W)))
   })
 
+  val envelope = Module(new Envelope)
+
   val dir  = Reg(UInt(8.W))
   val srcn = Reg(UInt(8.W))
   val pitch = Reg(UInt(14.W))
@@ -40,7 +42,6 @@ class DSPBlock(val idx: Int) extends Module {
   val adsrMode = RegInit(ADSRMode.Release)
   val keyOnCounter = Reg(UInt(3.W))
   val fetchable = RegInit(true.B)
-  val envelope = Reg(SInt(16.W))
   val envCounter = Reg(UInt(12.W))
 
   //                //
@@ -54,7 +55,7 @@ class DSPBlock(val idx: Int) extends Module {
   val sample = applyGaussianFilter(sampleIdx)
 
   // apply envelope
-  val envelopedSample = sample * envelope
+  val envelopedSample = sample * envelope.io.envelope
 
   // apply left and right volume
   val leftSample = leftVol * envelopedSample

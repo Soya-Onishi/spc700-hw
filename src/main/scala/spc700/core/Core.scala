@@ -7,16 +7,18 @@ import chisel3.util.{Cat, Enum, MuxCase, MuxLookup, SwitchContext, is, switch}
 class Core extends Module {
   override val io = IO(new Bundle{
     // communicate to ram
+    val ramReadEn = Output(Bool())
     val ramWriteEn = Output(Bool())
+    val ramAddr = Output(UInt(8.W))
     val ramReadData = Input(UInt(8.W))
-    val ramReadAddr = Output(UInt(16.W))
     val ramWriteData = Output(UInt(8.W))
-    val ramWriteAddr = Output(UInt(16.W))
+
+    val regInit = RegisterFile()
   })
 
   val fetch :: decode :: exec :: jump :: sleep :: Nil = Enum(4)
   val globalState = RegInit(fetch)
-  val regs = Reg(RegisterFile())
+  val regs = RegInit(io.regInit)
   val operand0 = Reg(UInt(16.W))
   val operand1 = Reg(UInt(16.W))
 
@@ -30,9 +32,9 @@ class Core extends Module {
   val byteALU = Module(new ALU)
 
   io.ramWriteEn := false.B
-  io.ramReadAddr := 0.U
+  io.ramReadEn := false.B
+  io.ramAddr := DontCare
   io.ramWriteData := DontCare
-  io.ramWriteAddr := DontCare
 
   decoder.io.opcode := DontCare
 
@@ -46,8 +48,7 @@ class Core extends Module {
 
   private def fetchState(): Unit = {
     // fetch instruction
-    io.ramReadAddr := regs.pc
-    opcode := io.ramReadData
+    opcode := readAbs(regs.pc)
 
     regs.pc := regs.pc + 1.U
     globalState := decode
@@ -58,8 +59,7 @@ class Core extends Module {
     decoder.io.opcode := opcode
 
     // fetch next data
-    io.ramReadAddr := regs.pc
-    val data = io.ramReadData
+    val data = readAbs(regs.pc)
 
     val inst = decoder.io.inst
     this.inst := decoder.io.inst
@@ -290,15 +290,13 @@ class Core extends Module {
 
     switch(absArithState) {
       is(readAbsH) {
-        io.ramReadAddr := regs.pc
-        absH := io.ramReadData
+        absH := readAbs(regs.pc)
         regs.pc := regs.pc + 1.U
 
         absArithState := readOperand
       }
       is(readOperand) {
-        io.ramReadAddr := Cat(absH, absL)
-        op1 := io.ramReadData
+        op1 := readAbs(Cat(absH, absL))
 
         when(isStore) {
           stored := op0
@@ -316,9 +314,7 @@ class Core extends Module {
         }
       }
       is(writeRam) {
-        io.ramWriteEn   := true.B
-        io.ramWriteAddr := Cat(absH, absL)
-        io.ramWriteData := stored
+        writeAbs(Cat(absH, absL), stored)
 
         globalState := fetch
         absArithState := readAbsH
@@ -334,10 +330,8 @@ class Core extends Module {
 
     switch(absCallState) {
       is(readNewPCH) {
-        io.ramReadAddr := regs.pc
-
         regs.pc := regs.pc + 1.U
-        newPCH := io.ramReadData
+        newPCH := readAbs(regs.pc)
         absCallState := none0
       }
       is(none0) {
@@ -366,9 +360,8 @@ class Core extends Module {
   }
 
   private def runAbsJmp(): Unit = {
-    io.ramReadAddr := regs.pc
     val newPCL = readData0
-    val newPCH = io.ramReadData
+    val newPCH = readAbs(regs.pc)
 
     regs.pc := Cat(newPCH, newPCL)
     globalState := fetch
@@ -1526,32 +1519,34 @@ class Core extends Module {
   }
 
   private def readAbs(abs: UInt): UInt = {
-    io.ramReadAddr := abs
+    io.ramReadEn := true.B
+    io.ramAddr   := abs
 
     io.ramReadData
   }
 
   private def writeAbs(abs: UInt, data: UInt): Unit = {
     io.ramWriteEn   := true.B
-    io.ramWriteAddr := abs
+    io.ramAddr      := abs
     io.ramWriteData := data
   }
 
   private def readDp(dpAddr: UInt): UInt = {
-    io.ramReadAddr := Cat(regs.psw.page, dpAddr)
+    io.ramReadEn := true.B
+    io.ramAddr   := Cat(regs.psw.page, dpAddr)
 
     io.ramReadData
   }
 
   private def writeDp(dpAddr: UInt, data: UInt): Unit = {
-    io.ramWriteEn := true.B
-    io.ramWriteAddr := Cat(regs.psw.page, dpAddr)
+    io.ramWriteEn   := true.B
+    io.ramAddr      := Cat(regs.psw.page, dpAddr)
     io.ramWriteData := data
   }
 
   private def pushStack(data: UInt): Unit = {
-    io.ramWriteEn := true.B
-    io.ramWriteAddr := Cat(1.U, regs.sp)
+    io.ramWriteEn   := true.B
+    io.ramAddr      := Cat(1.U, regs.sp)
     io.ramWriteData := data
 
     regs.sp := regs.sp - 1.U
@@ -1559,7 +1554,8 @@ class Core extends Module {
 
   private def popStack(): UInt = {
     regs.sp := regs.sp + 1.U
-    io.ramReadAddr := Cat(1.U, regs.sp + 1.U)
+    io.ramReadEn := true.B
+    io.ramAddr := Cat(1.U, regs.sp + 1.U)
 
     io.ramReadData
   }
@@ -1601,5 +1597,3 @@ class Core extends Module {
 object RegType extends ChiselEnum {
   val A, X, Y, SP = Value
 }
-
-

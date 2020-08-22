@@ -2,6 +2,7 @@ package spc700.ram
 
 import chisel3._
 import chisel3.util.{switch, is, SwitchContext}
+import chisel3.util.experimental.loadMemoryFromFile
 
 class MemController extends Module {
   val io = IO(new Bundle {
@@ -31,6 +32,8 @@ class MemController extends Module {
   })
 
   val mem = Mem(64 * 1024, UInt(8.W))
+  loadMemoryFromFile(mem, "./spc/ram.hex")
+
   val rom = VecInit(Seq.fill(64)(0.U(8.W)))
   val dspAddr = Reg(UInt(8.W))
 
@@ -52,7 +55,7 @@ class MemController extends Module {
 
   when(io.readEn) {
     val readIO = io.addr >= 0x00F1.U & io.addr <= 0x00FF.U
-    val readROM = io.addr >= 0xFFC0.U
+    val readROM = io.addr >= 0xFFC0.U // TODO: implement ROM writable flag check
 
     when(readIO) {
       io.rdata := readFromIO()
@@ -83,7 +86,7 @@ class MemController extends Module {
     ret := 0.U
     switch(io.addr) {
       is(0x00F2.U) { ret := dspAddr }
-      is(0x00F3.U) { ret := io.rdspData }
+      is(0x00F3.U) { ret := 0.U } // TODO: in core debug, dsp register returns 0 instead of io.rdspData
       is(0x00F8.U) { ret := mem.read(0x00F8.U) }
       is(0x00F9.U) { ret := mem.read(0x00F9.U) }
       is(0x00FA.U) { ret := mem.read(0x00FA.U) }
