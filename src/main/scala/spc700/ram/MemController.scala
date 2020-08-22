@@ -41,10 +41,10 @@ class MemController extends Module {
   io.timerEn := DontCare
   io.romWritable := DontCare
 
-  io.setTimerDivider := Vec(3, false.B)
+  io.setTimerDivider := VecInit(Seq.fill(3)(false.B))
   io.newDivider := DontCare
 
-  io.readTimer := Vec(3, false.B)
+  io.readTimer := VecInit(Seq.fill(3)(false.B))
 
   io.setDSPRegister := false.B
   io.dspAddr := dspAddr
@@ -52,6 +52,8 @@ class MemController extends Module {
 
   io.dataToDSP(0) := mem.read(io.addrFromDSP(0))
   io.dataToDSP(1) := mem.read(io.addrFromDSP(1))
+
+  io.rdata := DontCare
 
   when(io.readEn) {
     val readIO = io.addr >= 0x00F1.U & io.addr <= 0x00FF.U
@@ -82,9 +84,10 @@ class MemController extends Module {
       io.timerOut(idx)
     }
 
-    val ret = UInt(8.W)
+    val ret = Wire(UInt(8.W))
     ret := 0.U
     switch(io.addr) {
+      is(0x00F1.U) { ret := mem.read(0x00F1.U) }
       is(0x00F2.U) { ret := dspAddr }
       is(0x00F3.U) { ret := 0.U } // TODO: in core debug, dsp register returns 0 instead of io.rdspData
       is(0x00F8.U) { ret := mem.read(0x00F8.U) }
@@ -94,7 +97,7 @@ class MemController extends Module {
       is(0x00FC.U) { ret := mem.read(0x00FC.U) }
       is(0x00FD.U) { ret := readTimer(0) }
       is(0x00FE.U) { ret := readTimer(1) }
-      is(0x00FE.U) { ret := readTimer(2) }
+      is(0x00FF.U) { ret := readTimer(2) }
     }
 
     ret

@@ -13,10 +13,10 @@ class Core extends Module {
     val ramReadData = Input(UInt(8.W))
     val ramWriteData = Output(UInt(8.W))
 
-    val regInit = RegisterFile()
+    val regInit = Input(RegisterFile())
   })
 
-  val fetch :: decode :: exec :: jump :: sleep :: Nil = Enum(4)
+  val fetch :: decode :: exec :: jump :: sleep :: Nil = Enum(5)
   val globalState = RegInit(fetch)
   val regs = RegInit(io.regInit)
   val operand0 = Reg(UInt(16.W))
@@ -31,12 +31,15 @@ class Core extends Module {
   val decoder = Module(new Decoder)
   val byteALU = Module(new ALU)
 
+  // submodule ALU and Decoder initialize
+  decoder.io := DontCare
+  byteALU.io := DontCare
+
+  // IO initialize
   io.ramWriteEn := false.B
   io.ramReadEn := false.B
   io.ramAddr := DontCare
   io.ramWriteData := DontCare
-
-  decoder.io.opcode := DontCare
 
   switch(globalState) {
     is(fetch) { fetchState() }
@@ -140,7 +143,7 @@ class Core extends Module {
   }
 
   private def execImm(inst: Instruction, imm: UInt): Unit = {
-    val register = RegType()
+    val register = Wire(RegType())
     register := RegType.A
     switch(inst.opcode) {
       is(0xCD.U) { register := RegType.X }
@@ -153,7 +156,7 @@ class Core extends Module {
       is(0x3D.U) { register := RegType.X }
     }
 
-    val src = UInt(8.W)
+    val src = Wire(UInt(8.W))
     src := DontCare
     switch(register) {
       is(RegType.A) { src := regs.a }
@@ -174,8 +177,8 @@ class Core extends Module {
   }
 
   private def execAcc(inst: Instruction): Unit = {
-    val src = RegType()
-    val dst = RegType()
+    val src = Wire(RegType())
+    val dst = Wire(RegType())
     src := RegType.A
     dst := RegType.A
     switch(inst.opcode) {
@@ -191,7 +194,7 @@ class Core extends Module {
       is(0xFD.U) {                   dst := RegType.Y }
     }
 
-    val operand = UInt(8.W)
+    val operand = Wire(UInt(8.W))
     operand := regs.a
     switch(src) {
       is(RegType.X) { operand := regs.x }
@@ -211,7 +214,7 @@ class Core extends Module {
   }
 
   private def execBranchByPSW(inst: Instruction, offset: UInt): Unit = {
-    val cond =  Bool()
+    val cond =  Wire(Bool())
     cond := false.B
     switch(inst.ops) {
       is(Ops.BPL) { cond := !regs.psw.sign }
@@ -262,11 +265,11 @@ class Core extends Module {
     val absArithState = RegInit(readAbsH)
     val absL = readData0
     val absH = Reg(UInt(8.W))
-    val op0Reg = RegType()
-    val op0 = UInt(8.W)
-    val op1 = UInt(8.W)
+    val op0Reg = Wire(RegType())
+    val op0 = Wire(UInt(8.W))
+    val op1 = Wire(UInt(8.W))
     val stored = Reg(UInt(8.W))
-    val isStore = Bool()
+    val isStore = Wire(Bool())
     val opcode = this.inst.opcode
 
     op0Reg := RegType.A
@@ -472,7 +475,7 @@ class Core extends Module {
 
   private def runDpArith(): Unit = {
     val fetchData :: storeResult :: Nil = Enum(2)
-    val regType = RegType()
+    val regType = Wire(RegType())
     val dpArithState = RegInit(fetchData)
     val isStore = inst.opcode === 0xC4.U | inst.opcode === 0xD8.U | inst.opcode === 0xCB.U
 
@@ -486,7 +489,7 @@ class Core extends Module {
       is(0x7E.U) { regType := RegType.Y }
     }
 
-    val op0 = UInt(8.W)
+    val op0 = Wire(UInt(8.W))
     op0 := regs.a
     switch(regType) {
       is(RegType.X) { op0 := regs.x }
@@ -532,7 +535,7 @@ class Core extends Module {
         dpRMWState := storeResult
       }
       is(storeResult) {
-        val out = UInt(8.W)
+        val out = Wire(UInt(8.W))
         out := DontCare
         when(isBitMan) {
           switch(inst.ops) {
@@ -570,9 +573,9 @@ class Core extends Module {
         val ya = Cat(regs.y, regs.a)
         val ret = ya - word
 
-        regs.psw.sign  := ret(15).toBool()
+        regs.psw.sign  := ret(15).asBool()
         regs.psw.zero  := ret === 0.U
-        regs.psw.carry := ret.head(1).toBool()
+        regs.psw.carry := ret.head(1).asBool()
       }
     }
   }
@@ -611,7 +614,7 @@ class Core extends Module {
           writeDp(dpAddrH, regs.y)
         } .otherwise {
           val dataH = readDp(dpAddrH)
-          val res   = UInt(8.W)
+          val res   = Wire(UInt(8.W))
           res := DontCare
           switch(inst.ops) {
             is(Ops.ADD) { res := runByteALU(inst.ops, regs.y, dataH) }
@@ -668,7 +671,7 @@ class Core extends Module {
 
         writeDp(dpAddrH, outH)
 
-        regs.psw.sign := result.head(1).toBool()
+        regs.psw.sign := result.head(1).asBool()
         regs.psw.zero := result === 0.U
         dpINCWState := fetchL
         globalState := fetch
@@ -696,7 +699,7 @@ class Core extends Module {
       }
       is(calculation) {
         // first data is not needed for MOV
-        val firstData = UInt(8.W)
+        val firstData = Wire(UInt(8.W))
         firstData := DontCare
         when(inst.ops =/= Ops.MOV) {
           firstData := readDp(firstAddr)
@@ -761,7 +764,7 @@ class Core extends Module {
     val dpAddr = Reg(UInt(8.W))
     val addrL = Reg(UInt(8.W))
     val addrH = Reg(UInt(8.W))
-    val regType = RegType()
+    val regType = Wire(RegType())
     regType := RegType.A
     switch(inst.opcode) {
       is(0xF9.U) { regType := RegType.X }
@@ -769,7 +772,7 @@ class Core extends Module {
       is(0xDB.U) { regType := RegType.Y }
       is(0xD9.U) { regType := RegType.X }
     }
-    val op = UInt(8.W)
+    val op = Wire(UInt(8.W))
     op := MuxLookup(regType.asUInt(), regs.a, Seq(
       RegType.X.asUInt() -> regs.x,
       RegType.Y.asUInt() -> regs.y
@@ -865,10 +868,10 @@ class Core extends Module {
     val dpRelState = RegInit(fetchOp)
     val operand = Reg(UInt(8.W))
     val dpAddr = readData0
-    val idx = inst.opcode(15, 13)
+    val idx = inst.opcode.head(3)
 
     def isBranch(): Bool = {
-      val ret = Bool()
+      val ret = Wire(Bool())
       ret := MuxLookup(inst.ops.asUInt(), false.B, Seq(
          Ops.BBS.asUInt() ->  getBit(idx, operand),
          Ops.BBC.asUInt() -> !getBit(idx, operand),
@@ -914,14 +917,14 @@ class Core extends Module {
     val isStore = inst.opcode === 0xD4.U | inst.opcode === 0xDB.U | inst.opcode === 0xD9.U
     val dp = readData0
     val dpAddr = Reg(UInt(8.W))
-    val regType = RegType()
+    val regType = Wire(RegType())
     regType := MuxLookup(inst.opcode, RegType.A, Seq(
       0xF9.U -> RegType.X,
       0xFB.U -> RegType.Y,
       0xDB.U -> RegType.Y,
       0xD9.U -> RegType.X,
     ))
-    val operand = UInt(8.W)
+    val operand = Wire(UInt(8.W))
     operand := MuxLookup(regType.asUInt(), regs.a, Seq(
       RegType.X.asUInt() -> regs.x,
       RegType.Y.asUInt() -> regs.y,
@@ -1104,7 +1107,7 @@ class Core extends Module {
       is(fetchData) {
         val data = readAbs(Cat(addrH, addrL))
         val bit = getBit(idx, data)
-        val res0 = Bool()
+        val res0 = Wire(Bool())
         res0 := MuxLookup(inst.ops.asUInt(), regs.psw.carry, Seq(
           Ops.AND.asUInt() -> (regs.psw.carry & bit),
           Ops.OR.asUInt()  -> (regs.psw.carry | bit),
@@ -1197,7 +1200,7 @@ class Core extends Module {
   }
 
   private def runDIV(): Unit = {
-    val setPSW :: normalDiv :: erroneousDiv0 :: erroneousDiv1 :: wait :: Nil = Enum(3)
+    val setPSW :: normalDiv :: erroneousDiv0 :: erroneousDiv1 :: wait :: Nil = Enum(5)
     val divState = RegInit(setPSW)
     val dividedForDiv = Reg(UInt(16.W))
     val dividedForMod = Reg(UInt(16.W))
@@ -1243,7 +1246,7 @@ class Core extends Module {
 
         when(waitCounter === 7.U) {
           regs.psw.zero := regs.a === 0.U
-          regs.psw.zero := regs.a.head(1).toBool()
+          regs.psw.zero := regs.a.head(1).asBool()
 
           waitCounter := 0.U
           divState := setPSW
@@ -1255,7 +1258,7 @@ class Core extends Module {
 
   private def runDAA(): Unit = {
     val firstCond = regs.psw.carry | regs.a > 0x99.U
-    val tmp = UInt(8.W)
+    val tmp = Wire(UInt(8.W))
     tmp := regs.a
     when(firstCond) {
       tmp := regs.a + 0x60.U
@@ -1263,14 +1266,14 @@ class Core extends Module {
     }
 
     val secondCond = regs.psw.half | tmp(3, 0) > 0x09.U
-    val ret = UInt(8.W)
+    val ret = Wire(UInt(8.W))
     ret := tmp
     when(secondCond) {
       ret := tmp + 0x06.U
     }
 
     regs.a        := ret
-    regs.psw.sign := ret.head(1).toBool()
+    regs.psw.sign := ret.head(1).asBool()
     regs.psw.zero := ret === 0.U
 
     globalState := fetch
@@ -1278,7 +1281,7 @@ class Core extends Module {
 
   private def runDAS(): Unit = {
     val firstCond = !regs.psw.carry | regs.a > 0x99.U
-    val tmp = UInt(8.W)
+    val tmp = Wire(UInt(8.W))
     tmp := regs.a
     when(firstCond) {
       tmp := regs.a - 0x60.U
@@ -1286,14 +1289,14 @@ class Core extends Module {
     }
 
     val secondCond = !regs.psw.half | regs.a(3, 0) > 0x09.U
-    val ret = UInt(8.W)
+    val ret = Wire(UInt(8.W))
     ret := tmp
     when(secondCond) {
       ret := tmp - 0x06.U
     }
 
     regs.a        := ret
-    regs.psw.sign := ret.head(1).toBool()
+    regs.psw.sign := ret.head(1).asBool()
     regs.psw.zero := ret === 0.U
 
     globalState := fetch
@@ -1305,7 +1308,7 @@ class Core extends Module {
     when(waitCount === 2.U) {
       val ret = Cat(regs.a(3, 0), regs.a(7, 4))
       regs.a := ret
-      regs.psw.sign := ret.head(1).toBool()
+      regs.psw.sign := ret.head(1).asBool()
       regs.psw.zero := ret === 0.U
 
       waitCount := 0.U
@@ -1380,7 +1383,7 @@ class Core extends Module {
       0x2D.U -> regs.a,
       0x4D.U -> regs.x,
       0x6D.U -> regs.y,
-      0x0D.U -> regs.psw
+      0x0D.U -> regs.psw.get,
     ))
     switch(pushState) {
       is(push) {
@@ -1498,7 +1501,7 @@ class Core extends Module {
       is(jump1) {
         jmpState := jump0
         globalState := fetch
-        regs.pc := regs.pc.asSInt() + jmpOffset
+        regs.pc := (regs.pc.asSInt() + jmpOffset).asUInt()
       }
     }
   }
@@ -1513,7 +1516,7 @@ class Core extends Module {
     when(byteALU.io.halfEn)     { regs.psw.half  := byteALU.io.halfOut  }
     when(byteALU.io.overflowEn) { regs.psw.overflow := byteALU.io.overflowOut }
     regs.psw.zero := byteALU.io.out === 0.U
-    regs.psw.sign := byteALU.io.out.head(1).toBool()
+    regs.psw.sign := byteALU.io.out.head(1).asBool()
 
     byteALU.io.out
   }
@@ -1561,7 +1564,7 @@ class Core extends Module {
   }
 
   private def getBit(idx: UInt, byte: UInt): Bool = {
-    val bits = byte.toBools()
+    val bits = byte.asBools()
     MuxLookup(idx, false.B, Seq(
       0.U -> bits(0),
       1.U -> bits(1),
@@ -1575,8 +1578,8 @@ class Core extends Module {
   }
 
   private def setBit(src: UInt, bit: Bool, idx: UInt): UInt = {
-    val srcBits = VecInit(src.toBools())
-    val ret = UInt(8.W)
+    val srcBits = VecInit(src.asBools())
+    val ret = Wire(UInt(8.W))
 
     switch(idx) {
       is(0.U) { srcBits(0) := bit }

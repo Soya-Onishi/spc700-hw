@@ -65,9 +65,9 @@ class ALU extends Module {
 
     val overflow = !(a ^ b) & (a ^ r)
 
-    setCarry(carry.toBool())
-    setOverflow(overflow.toBool())
-    setHalf(half.toBool())
+    setCarry(carry.asBool())
+    setOverflow(overflow.asBool())
+    setHalf(half.asBool())
 
     io.out := Cat(upperRes, lowerRes)
   }
@@ -91,9 +91,9 @@ class ALU extends Module {
     val r = upperRes.head(1)
     val overflow = (a ^ b) & (a ^ r)
 
-    setCarry(carry.toBool())
-    setOverflow(overflow.toBool())
-    setHalf(half.toBool())
+    setCarry(carry.asBool())
+    setOverflow(overflow.asBool())
+    setHalf(half.asBool())
 
     io.out := Cat(upperRes, lowerRes)
   }
@@ -101,7 +101,7 @@ class ALU extends Module {
   private def cmp(): Unit = {
     val res = io.op0 - io.op1
 
-    setCarry(res.head(1).toBool())
+    setCarry(res.head(1).asBool())
     io.out := io.op0
   }
 
@@ -122,22 +122,22 @@ class ALU extends Module {
   }
 
   private def asl(): Unit = {
-    setCarry(io.op0.head(1).toBool())
+    setCarry(io.op0.head(1).asBool())
     io.out := Cat(io.op0.tail(1), 0.U(1))
   }
 
   private def rol(): Unit = {
-    setCarry(io.op0.head(1).toBool())
+    setCarry(io.op0.head(1).asBool())
     io.out := Cat(io.op0.tail(1), io.carryIn.asUInt())
   }
 
   private def lsr(): Unit = {
-    setCarry(io.op0.head(1).toBool())
+    setCarry(io.op0.head(1).asBool())
     io.out := Cat(0.U(1), io.op0(7, 1))
   }
 
   private def ror(): Unit = {
-    setCarry(io.op0.head(1).toBool())
+    setCarry(io.op0.head(1).asBool())
     io.out := Cat(io.carryIn.asUInt(), io.op0(7, 1))
   }
 
