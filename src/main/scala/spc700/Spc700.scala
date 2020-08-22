@@ -1,13 +1,19 @@
 package spc700
 
 import chisel3._
-import spc700.core.{Core, RegisterFile}
+import spc700.core.{Core, PSW}
 import spc700.ram.MemController
 import spc700.timer.Timer
 
 class Spc700 extends Module {
   val io = IO(new Bundle {
-    val initReg = Input(RegisterFile())
+    val pc = Input(UInt(8.W))
+    val a = Input(UInt(8.W))
+    val x = Input(UInt(8.W))
+    val y = Input(UInt(8.W))
+    val sp = Input(UInt(8.W))
+    val psw = Input(UInt(8.W))
+
     val initTimerEn = Input(Vec(3, Bool()))
     val initTimerDivider = Input(Vec(3, UInt(8.W)))
   })
@@ -37,7 +43,15 @@ class Spc700 extends Module {
   mcu.io.rdspData := DontCare
 
   // initialization
-  core.io.regInit := io.initReg
+  core.io.regInit.a := io.a
+  core.io.regInit.x := io.x
+  core.io.regInit.y := io.y
+  core.io.regInit.sp := io.sp
+  core.io.regInit.pc := io.pc
+  val psw = Wire(PSW())
+  psw.set(io.psw)
+  core.io.regInit.psw := psw
+
   timers.zip(io.initTimerEn).foreach{ case (timer, en) => timer.io.initEnable := en }
   timers.zip(io.initTimerDivider).foreach{ case (timer, div) => timer.io.initDivider := div }
 }

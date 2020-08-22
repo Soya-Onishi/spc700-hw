@@ -53,6 +53,8 @@ class Core extends Module {
     // fetch instruction
     opcode := readAbs(regs.pc)
 
+    printf(p"[0x${Hexadecimal(opcode)}] pc: 0x${Hexadecimal(regs.pc)}, a: 0x${Hexadecimal(regs.a)}, x: 0x${Hexadecimal(regs.x)}, y: 0x${Hexadecimal(regs.y)}, sp: 0x${Hexadecimal(regs.sp)}, psw: 0b${Binary(regs.psw.get)}\n")
+
     regs.pc := regs.pc + 1.U
     globalState := decode
   }
