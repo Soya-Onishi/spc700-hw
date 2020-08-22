@@ -14,6 +14,8 @@ class Core extends Module {
     val ramWriteData = Output(UInt(8.W))
 
     val regInit = Input(RegisterFile())
+
+    val pcOut = Output(UInt(16.W))
   })
 
   val fetch :: decode :: exec :: jump :: sleep :: Nil = Enum(5)
@@ -40,6 +42,7 @@ class Core extends Module {
   io.ramReadEn := false.B
   io.ramAddr := DontCare
   io.ramWriteData := DontCare
+  io.pcOut := regs.pc
 
   switch(globalState) {
     is(fetch) { fetchState() }

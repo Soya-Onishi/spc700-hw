@@ -16,11 +16,15 @@ class Spc700 extends Module {
 
     val initTimerEn = Input(Vec(3, Bool()))
     val initTimerDivider = Input(Vec(3, UInt(8.W)))
+
+    val pcOut = Output(UInt(16.W))
   })
 
   val core = Module(new Core)
   val mcu  = Module(new MemController)
   val timers = Vector(Module(new Timer(8000)), Module(new Timer(8000)), Module(new Timer(64000)))
+
+  io.pcOut := core.io.pcOut
 
   // connection between core and ram
   mcu.io.readEn       := core.io.ramReadEn
