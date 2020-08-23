@@ -44,6 +44,10 @@ class Core extends Module {
   io.ramWriteData := DontCare
   io.pcOut := regs.pc
 
+  when(reset.asBool()) {
+    printf(p"resetting...\n pc: 0x${Hexadecimal(io.regInit.pc)}, a: 0x${Hexadecimal(io.regInit.a)}, x: 0x${Hexadecimal(io.regInit.x)}, y: 0x${Hexadecimal(io.regInit.y)}, sp: 0x${Hexadecimal(io.regInit.sp)}, psw: 0b${Binary(io.regInit.psw.get)}\n")
+  }
+
   switch(globalState) {
     is(fetch) { fetchState() }
     is(decode) { decodeState() }

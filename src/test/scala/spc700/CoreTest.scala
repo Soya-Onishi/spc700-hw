@@ -15,11 +15,13 @@ class CoreTest(chip: Spc700) extends PeekPokeTester(chip) {
   val (timerEnables, timerDividers) = Files.readAllLines(timerPaths)
     .asScala
     .toVector
-    .map(str => timerPattern.findAllIn(str).matchData.map(m => (m.group(0), m.group(1))).toVector.head)
+    .map(str => timerPattern.findFirstMatchIn(str).map(m => (m.group(1), m.group(2))).toVector.head)
     .map{ case (en, divider) => (Integer.parseInt(en), Integer.parseInt(divider, 16)) }
     .unzip
 
   val Vector(pc, a, x, y, sp, psw) = regs
+
+  println(s"$pc, $a, $x, $y, $sp, $psw")
 
 
   poke(chip.io.pc, pc)
@@ -32,7 +34,10 @@ class CoreTest(chip: Spc700) extends PeekPokeTester(chip) {
   timerEnables.zip(chip.io.initTimerEn).foreach{ case (en, timer) => poke(timer, en) }
   timerDividers.zip(chip.io.initTimerDivider).foreach{ case (div, timer) => poke(timer, div) }
   reset()
+
   step(100)
+
+  println(s"$pc, $a, $x, $y, $sp, $psw")
 }
 
 class CoreTester extends ChiselFlatSpec {
