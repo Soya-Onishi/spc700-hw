@@ -210,7 +210,7 @@ object Decoder {
           case 0x5 => Addressing.AbsJmp
           case 0x6 => Addressing.Special
           case 0x7 => Addressing.Special
-          case 0x8 => Addressing.Imm
+          case 0x8 => Addressing.DpImm
           case 0x9 => Addressing.Special
           case 0xA => Addressing.IndXInc
           case 0xB => Addressing.IndXInc

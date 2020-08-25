@@ -4,9 +4,14 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import scala.collection.JavaConverters._
 import chisel3.iotesters.{PeekPokeTester, Driver, ChiselFlatSpec}
+import spc700.core.RegValue
 
 
 class CoreTest(chip: Spc700) extends PeekPokeTester(chip) {
+  step(100)
+}
+
+class CoreTester extends ChiselFlatSpec {
   val timerPattern = "([01]),([0-9a-fA-F]+)".r
 
   val regPaths   = Paths.get("./spc/reg.hex")
@@ -19,32 +24,12 @@ class CoreTest(chip: Spc700) extends PeekPokeTester(chip) {
     .map{ case (en, divider) => (Integer.parseInt(en), Integer.parseInt(divider, 16)) }
     .unzip
 
-  val Vector(pc, a, x, y, sp, psw) = regs
+  val Vector(reg_pc, reg_a, reg_x, reg_y, reg_sp, reg_psw) = regs
 
-  println(s"$pc, $a, $x, $y, $sp, $psw")
+  val reg = RegValue(reg_a, reg_x, reg_y, reg_sp, reg_psw, reg_pc)
 
-
-  poke(chip.io.pc, pc)
-  poke( chip.io.a,  a)
-  poke( chip.io.x,  x)
-  poke( chip.io.y,  y)
-  poke(chip.io.sp, sp)
-  poke(chip.io.psw,psw)
-
-  timerEnables.zip(chip.io.initTimerEn).foreach{ case (en, timer) => poke(timer, en) }
-  timerDividers.zip(chip.io.initTimerDivider).foreach{ case (div, timer) => poke(timer, div) }
-  reset()
-
-  step(100)
-
-  println(s"$pc, $a, $x, $y, $sp, $psw")
-}
-
-class CoreTester extends ChiselFlatSpec {
   behavior of "Core"
-  backends foreach { backend =>
-    it should s"10000 cycles works correctly in $backend" in {
-      Driver(() => new Spc700, backend)(c => new CoreTest(c)) should be (true)
-    }
+  it should s"10000 cycles works correctly in verilator" in {
+    Driver(() => new Spc700(reg), "verilator")(c => new CoreTest(c)) should be (true)
   }
 }

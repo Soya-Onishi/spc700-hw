@@ -1,11 +1,11 @@
 package spc700
 
 import chisel3._
-import spc700.core.{Core, PSW}
+import spc700.core.{Core, PSW, RegValue}
 import spc700.ram.MemController
 import spc700.timer.Timer
 
-class Spc700 extends Module {
+class Spc700(reg: RegValue) extends Module {
   val io = IO(new Bundle {
     val pc = Input(UInt(8.W))
     val a = Input(UInt(8.W))
@@ -20,7 +20,7 @@ class Spc700 extends Module {
     val pcOut = Output(UInt(16.W))
   })
 
-  val core = Module(new Core)
+  val core = Module(new Core(reg))
   val mcu  = Module(new MemController)
   val timers = Vector(Module(new Timer(8000)), Module(new Timer(8000)), Module(new Timer(64000)))
 

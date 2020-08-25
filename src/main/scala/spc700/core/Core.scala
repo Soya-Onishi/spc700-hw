@@ -4,12 +4,12 @@ import chisel3._
 import chisel3.experimental.ChiselEnum
 import chisel3.util.{Cat, Enum, MuxCase, MuxLookup, SwitchContext, is, switch}
 
-class Core extends Module {
+class Core(initReg: RegValue) extends Module {
   override val io = IO(new Bundle{
     // communicate to ram
     val ramReadEn = Output(Bool())
     val ramWriteEn = Output(Bool())
-    val ramAddr = Output(UInt(8.W))
+    val ramAddr = Output(UInt(16.W))
     val ramReadData = Input(UInt(8.W))
     val ramWriteData = Output(UInt(8.W))
 
@@ -20,9 +20,17 @@ class Core extends Module {
 
   val fetch :: decode :: exec :: jump :: sleep :: Nil = Enum(5)
   val globalState = RegInit(fetch)
-  val regs = RegInit(io.regInit)
   val operand0 = Reg(UInt(16.W))
   val operand1 = Reg(UInt(16.W))
+
+  val init = Wire(RegisterFile())
+  init.a := initReg.a.U
+  init.x := initReg.x.U
+  init.y := initReg.y.U
+  init.pc := initReg.pc.U
+  init.sp := initReg.sp.U
+  init.psw.set(initReg.psw.U)
+  val regs = RegInit(init)
 
   val opcode = Reg(UInt(8.W))
   val inst = Reg(Instruction())
@@ -58,9 +66,11 @@ class Core extends Module {
 
   private def fetchState(): Unit = {
     // fetch instruction
-    opcode := readAbs(regs.pc)
+    val op = Wire(UInt(8.W))
+    op := readAbs(regs.pc)
+    opcode := op
 
-    printf(p"[0x${Hexadecimal(opcode)}] pc: 0x${Hexadecimal(regs.pc)}, a: 0x${Hexadecimal(regs.a)}, x: 0x${Hexadecimal(regs.x)}, y: 0x${Hexadecimal(regs.y)}, sp: 0x${Hexadecimal(regs.sp)}, psw: 0b${Binary(regs.psw.get)}\n")
+    printf(p"[0x${Hexadecimal(op)}] pc: 0x${Hexadecimal(regs.pc)}, a: 0x${Hexadecimal(regs.a)}, x: 0x${Hexadecimal(regs.x)}, y: 0x${Hexadecimal(regs.y)}, sp: 0x${Hexadecimal(regs.sp)}, psw: 0b${Binary(regs.psw.get)}\n")
 
     regs.pc := regs.pc + 1.U
     globalState := decode
@@ -85,7 +95,6 @@ class Core extends Module {
     }.elsewhen(inst.addressing === Addressing.PSWMan) {
       manPSWDecode(inst.ops)
     }.elsewhen(inst.ops === Ops.NOP){
-      regs.pc := regs.pc + 1.U
       globalState := fetch
     }.otherwise{
       regs.pc := regs.pc + 1.U
@@ -742,6 +751,7 @@ class Core extends Module {
     val dpAddr = Reg(UInt(8.W))
     val dpData = Reg(UInt(8.W))
 
+    printf(p"[dpimm state] $dpImmState\n")
     switch(dpImmState) {
       is(fetchDpAddr) {
         dpAddr := readAbs(regs.pc)
@@ -1609,3 +1619,5 @@ class Core extends Module {
 object RegType extends ChiselEnum {
   val A, X, Y, SP = Value
 }
+
+case class RegValue(a: Int, x: Int, y: Int, sp: Int, psw: Int, pc: Int)
