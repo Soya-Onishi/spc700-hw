@@ -21,9 +21,6 @@ class CoreTest(chip: Spc700) extends PeekPokeTester(chip) {
 
   val Vector(pc, a, x, y, sp, psw) = regs
 
-  println(s"$pc, $a, $x, $y, $sp, $psw")
-
-
   poke(chip.io.pc, pc)
   poke( chip.io.a,  a)
   poke( chip.io.x,  x)
@@ -36,8 +33,6 @@ class CoreTest(chip: Spc700) extends PeekPokeTester(chip) {
   reset()
 
   step(100)
-
-  println(s"$pc, $a, $x, $y, $sp, $psw")
 }
 
 class CoreTester extends ChiselFlatSpec {
