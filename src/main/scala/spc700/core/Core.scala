@@ -790,6 +790,7 @@ class Core(initReg: RegValue) extends Module {
     val imm = readData0
     val dpAddr = Reg(UInt(8.W))
     val dpData = Reg(UInt(8.W))
+    val isStore = inst.opcode === 0x8F.U
 
     when(enable) {
       switch(dpImmState) {
@@ -803,7 +804,7 @@ class Core(initReg: RegValue) extends Module {
           dpImmState := storeResult
         }
         is(storeResult) {
-          val out = runByteALU(inst.ops, dpData, imm)
+          val out = Mux(isStore, imm, runByteALU(inst.ops, dpData, imm))
           when(inst.ops =/= Ops.CMP) {
             writeDp(dpAddr, out)
           }
